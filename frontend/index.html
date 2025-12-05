@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多智能体头脑风暴系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/force-graph"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .message-enter {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .typing-indicator::after {
+            content: '...';
+            animation: typing 1s infinite;
+        }
+
+        @keyframes typing {
+
+            0%,
+            20% {
+                content: '.';
+            }
+
+            40% {
+                content: '..';
+            }
+
+            60%,
+            100% {
+                content: '...';
+            }
+        }
+
+        .phase-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .facilitator-msg {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .agent-msg {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .summary-section {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Markdown Styles */
+        .markdown-content h1 {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin: 1rem 0 0.5rem;
+        }
+
+        .markdown-content h2 {
+            font-size: 1.25rem;
+            font-weight: bold;
+            margin: 0.8rem 0 0.4rem;
+            color: #a78bfa;
+        }
+
+        .markdown-content h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 0.6rem 0 0.3rem;
+        }
+
+        .markdown-content p {
+            margin: 0.4rem 0;
+            line-height: 1.6;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin: 0.4rem 0;
+            padding-left: 1.5rem;
+        }
+
+        .markdown-content li {
+            margin: 0.2rem 0;
+        }
+
+        .markdown-content code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+
+        .markdown-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.8rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+        }
+
+        .markdown-content blockquote {
+            border-left: 3px solid #a78bfa;
+            padding-left: 1rem;
+            margin: 0.5rem 0;
+            opacity: 0.9;
+        }
+
+        .markdown-content table {
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+            width: 100%;
+        }
+
+        .markdown-content th,
+        .markdown-content td {
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 0.4rem 0.6rem;
+        }
+
+        .markdown-content th {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .mermaid {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 0.5rem 0;
+        }
+    </style>
+</head>
+
+<body class="text-white">
+    <div id="app" class="h-screen flex flex-col">
+        <!-- Header -->
+        <header class="glass-card p-4 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">🧠</span>
+                <h1
+                    class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                    多智能体头脑风暴系统
+                </h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <div v-if="currentPhase" class="phase-badge px-3 py-1 rounded-full text-sm font-medium">
+                    {{ phaseEmoji }} {{ phaseName }}
+                </div>
+                <div class="text-sm text-gray-400">
+                    {{ sessionActive ? '🟢 进行中' : '⚪ 待启动' }}
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex overflow-hidden p-4 gap-4">
+            <!-- Left Panel: Config & Agents -->
+            <div class="w-80 glass-card rounded-xl p-4 overflow-y-auto">
+                <div v-if="!sessionActive">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span>⚙️</span> 会话配置
+                    </h2>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">讨论主题</label>
+                        <textarea v-model="topic" rows="2"
+                            class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
+                            placeholder="输入讨论主题..."></textarea>
+                    </div>
+
+                    <h3 class="text-md font-medium mb-2 flex items-center gap-2">
+                        <span>👥</span> 参与专家 ({{ agents.length }})
+                    </h3>
+
+                    <div class="space-y-2 max-h-60 overflow-y-auto mb-4">
+                        <div v-for="(agent, index) in agents" :key="index" class="glass-card rounded-lg p-2 text-sm">
+                            <div class="flex justify-between items-center">
+                                <span class="font-medium">{{ agent.name }}</span>
+                                <button @click="removeAgent(index)" class="text-red-400 hover:text-red-300">✕</button>
+                            </div>
+                            <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
+                            <select v-model="agent.model_name"
+                                class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
+                                <option value="gpt-5.1">GPT-5.1</option>
+                                <option value="grok-4.1-fast">Grok 4.1</option>
+                                <option value="claude-sonnet-4-5-20250929">Claude 4.5</option>
+                                <option value="gemini-3-pro-preview">Gemini 3</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button @click="showPresetModal = true"
+                        class="w-full py-2 glass-card rounded-lg hover:bg-white/10 mb-4 text-sm">
+                        ➕ 添加专家
+                    </button>
+
+                    <!-- Phase Rounds Configuration -->
+                    <div class="mb-4">
+                        <h3 class="text-md font-medium mb-2 flex items-center gap-2">
+                            <span>🔄</span> 阶段轮数配置
+                        </h3>
+                        <div class="space-y-2 text-sm">
+                            <template v-for="phase in phases" :key="phase.id">
+                                <div v-if="phase.defaultRounds > 0"
+                                    class="flex items-center justify-between p-2 glass-card rounded">
+                                    <span>{{ phase.emoji }} {{ phase.name }}</span>
+                                    <div class="flex items-center gap-2">
+                                        <button @click="decreaseRounds(phase.id)"
+                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">-</button>
+                                        <span class="w-6 text-center">{{ phaseRounds[phase.id] || phase.defaultRounds
+                                            }}</span>
+                                        <button @click="increaseRounds(phase.id)"
+                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">+</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <button @click="startFullSession" :disabled="loading || agents.length === 0"
+                        class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
+                        🚀 启动头脑风暴
+                    </button>
+                </div>
+
+                <div v-else>
+                    <h2 class="text-lg font-semibold mb-4">📋 会议进程</h2>
+
+                    <!-- Phase Progress -->
+                    <div class="space-y-2 mb-6">
+                        <div v-for="phase in phases" :key="phase.id" :class="['p-2 rounded-lg text-sm flex items-center gap-2', 
+                                      phase.id === currentPhase ? 'bg-purple-500/30 border border-purple-500' : 
+                                      completedPhases.includes(phase.id) ? 'bg-green-500/20' : 'bg-white/5']">
+                            <span>{{ phase.emoji }}</span>
+                            <span>{{ phase.name }}</span>
+                            <span v-if="phase.id === currentPhase && loading"
+                                class="ml-auto text-yellow-400 pulse">●</span>
+                            <span v-else-if="completedPhases.includes(phase.id)" class="ml-auto text-green-400">✓</span>
+                        </div>
+                    </div>
+
+                    <h3 class="text-md font-medium mb-2">👥 参与专家</h3>
+                    <div class="space-y-1 text-sm">
+                        <div v-for="agent in activeAgents" :key="agent.name"
+                            class="flex items-center gap-2 p-2 bg-white/5 rounded">
+                            <span :class="typingAgent === agent.name ? 'animate-pulse' : ''">
+                                {{ typingAgent === agent.name ? '💭' : '👤' }}
+                            </span>
+                            <span>{{ agent.name }}</span>
+                            <span class="text-xs text-gray-400 ml-auto">{{ agent.emotion }}</span>
+                        </div>
+                    </div>
+
+                    <!-- Control Buttons -->
+                    <div class="mt-6 space-y-2">
+                        <button @click="togglePause"
+                            :class="['w-full py-2 rounded-lg font-medium transition', 
+                                     isPaused ? 'bg-green-500 hover:bg-green-600' : 'bg-yellow-500 hover:bg-yellow-600']">
+                            {{ isPaused ? '▶️ 继续' : '⏸️ 暂停' }}
+                        </button>
+                        <button @click="resetSession"
+                            class="w-full py-2 bg-red-500/80 hover:bg-red-500 rounded-lg font-medium transition">
+                            🔄 重置会话
+                        </button>
+                        <div class="border-t border-white/10 pt-2 mt-2">
+                            <p class="text-xs text-gray-400 mb-2">📤 导出功能</p>
+                            <button @click="exportSummaryMD" :disabled="!hasSummary"
+                                class="w-full py-2 bg-blue-500/80 hover:bg-blue-500 disabled:opacity-40 rounded-lg font-medium transition mb-2">
+                                📄 导出方案(MD)
+                            </button>
+                            <button @click="exportGraphMermaid" :disabled="graphData.nodes.length === 0"
+                                class="w-full py-2 bg-purple-500/80 hover:bg-purple-500 disabled:opacity-40 rounded-lg font-medium transition">
+                                🔮 导出图谱(Mermaid)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle Panel: Chat -->
+            <div class="flex-1 glass-card rounded-xl flex flex-col overflow-hidden">
+                <div class="p-4 border-b border-white/10">
+                    <h2 class="font-semibold">💬 讨论区</h2>
+                    <p class="text-sm text-gray-400">{{ topic || '等待会议开始...' }}</p>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-4 space-y-3" id="chat-container">
+                    <div v-for="(msg, idx) in messages" :key="idx" class="message-enter">
+                        <!-- Facilitator Message -->
+                        <div v-if="msg.type === 'facilitator'" class="facilitator-msg rounded-xl p-4 max-w-2xl">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-lg">🎙️</span>
+                                <span class="font-bold">主持人</span>
+                                <span class="text-xs bg-white/20 px-2 py-0.5 rounded-full">{{ msg.phase_name }}</span>
+                            </div>
+                            <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                        </div>
+
+                        <!-- Agent Message -->
+                        <div v-else-if="msg.type === 'agent'" class="agent-msg rounded-xl p-4 max-w-2xl ml-8">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-lg">👤</span>
+                                <span class="font-bold">{{ msg.sender }}</span>
+                                <span class="text-xs bg-blue-500/30 px-2 py-0.5 rounded-full">{{ msg.role }}</span>
+                                <span class="text-xs text-gray-400 ml-auto">{{ msg.model }}</span>
+                            </div>
+                            <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                        </div>
+
+                        <!-- Summary -->
+                        <div v-else-if="msg.type === 'summary'" class="summary-section rounded-xl p-4 mt-4">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-lg">📋</span>
+                                <span class="font-bold">创新方案报告</span>
+                            </div>
+                            <div class="markdown-content text-sm" v-html="renderMarkdown(msg.content)"></div>
+                        </div>
+
+                        <!-- Phase Transition -->
+                        <div v-else-if="msg.type === 'phase'" class="text-center py-2">
+                            <span class="bg-purple-500/30 px-4 py-1 rounded-full text-sm">
+                                {{ msg.emoji }} {{ msg.content }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Typing Indicator -->
+                    <div v-if="typingAgent" class="agent-msg rounded-xl p-4 max-w-2xl ml-8 opacity-70">
+                        <div class="flex items-center gap-2">
+                            <span class="text-lg">💭</span>
+                            <span class="font-medium">{{ typingAgent }}</span>
+                            <span class="typing-indicator">正在思考</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Visualization -->
+            <div class="w-80 glass-card rounded-xl p-4 flex flex-col">
+                <h2 class="font-semibold mb-2">🔗 知识图谱</h2>
+                <div id="graph" class="flex-1 rounded-lg bg-black/30 overflow-hidden">
+                    <div v-if="!graphData.nodes || graphData.nodes.length === 0"
+                        class="h-full flex items-center justify-center text-gray-500 text-sm">
+                        等待讨论开始...
+                    </div>
+                </div>
+
+                <div class="mt-4 text-sm text-gray-400">
+                    <div>💬 消息: {{ messages.length }}</div>
+                    <div>📊 阶段: {{ completedPhases.length }}/7</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Expert Selection Modal -->
+        <div v-if="showPresetModal" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div class="glass-card rounded-2xl p-6 w-3/4 max-h-[80vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold">选择专家角色</h2>
+                    <button @click="showPresetModal = false"
+                        class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                </div>
+                <div class="grid grid-cols-4 gap-3">
+                    <div v-for="(preset, idx) in expertPresets" :key="idx" @click="addPresetAgent(preset)"
+                        class="p-3 glass-card rounded-lg cursor-pointer hover:bg-white/10 transition">
+                        <div class="font-bold text-sm">{{ preset.name }}</div>
+                        <div class="text-xs text-gray-400 truncate">{{ preset.expertise }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted, nextTick, computed } = Vue;
+
+        createApp({
+            setup() {
+                const sessionActive = ref(false);
+                const loading = ref(false);
+                const topic = ref("智能家电产品创新方案");
+                const messages = ref([]);
+                const typingAgent = ref(null);
+                const currentPhase = ref(null);
+                const phaseName = ref("");
+                const phaseEmoji = ref("");
+                const completedPhases = ref([]);
+                const activeAgents = ref([]);
+                const graphData = ref({ nodes: [], links: [] });
+                const showPresetModal = ref(false);
+                const isPaused = ref(false);
+                let graphInstance = null;
+                let eventSource = null;
+
+                const phases = ref([
+                    { id: "opening", name: "启动会话", emoji: "🎬", defaultRounds: 0 },
+                    { id: "define_topic", name: "定义主题", emoji: "🎯", defaultRounds: 1 },
+                    { id: "diverge", name: "发散阶段", emoji: "💡", defaultRounds: 2 },
+                    { id: "deepen", name: "深化阶段", emoji: "🔍", defaultRounds: 2 },
+                    { id: "evaluate", name: "评估阶段", emoji: "⚖️", defaultRounds: 1 },
+                    { id: "integrate", name: "整合阶段", emoji: "🔗", defaultRounds: 1 },
+                    { id: "output", name: "输出方案", emoji: "📋", defaultRounds: 0 }
+                ]);
+
+                // Phase rounds configuration
+                const phaseRounds = ref({
+                    define_topic: 1,
+                    diverge: 2,
+                    deepen: 2,
+                    evaluate: 1,
+                    integrate: 1
+                });
+
+                const increaseRounds = (phaseId) => {
+                    if (!phaseRounds.value[phaseId]) {
+                        const phase = phases.value.find(p => p.id === phaseId);
+                        phaseRounds.value[phaseId] = phase ? phase.defaultRounds : 1;
+                    }
+                    if (phaseRounds.value[phaseId] < 5) {
+                        phaseRounds.value[phaseId]++;
+                    }
+                };
+
+                const decreaseRounds = (phaseId) => {
+                    if (!phaseRounds.value[phaseId]) {
+                        const phase = phases.value.find(p => p.id === phaseId);
+                        phaseRounds.value[phaseId] = phase ? phase.defaultRounds : 1;
+                    }
+                    if (phaseRounds.value[phaseId] > 0) {
+                        phaseRounds.value[phaseId]--;
+                    }
+                };
+
+                const expertPresets = [
+                    { name: "产品经理", role: "Product Manager", expertise: "产品规划与市场分析", style: "用户导向", personality_traits: ["洞察力强", "协调能力强"] },
+                    { name: "电控软件专家", role: "Electronics Control Software Expert", expertise: "电控系统软件开发", style: "严谨", personality_traits: ["逻辑清晰", "注重安全"] },
+                    { name: "嵌入式软件专家", role: "Embedded Software Expert", expertise: "嵌入式系统开发", style: "底层思维", personality_traits: ["资源敏感", "性能优化"] },
+                    { name: "产品企划专家", role: "Product Planning Expert", expertise: "产品战略与规划", style: "前瞻性", personality_traits: ["战略眼光", "市场敏锐"] },
+                    { name: "IoT专家", role: "IoT Expert", expertise: "物联网技术与架构", style: "系统性", personality_traits: ["连接思维", "安全意识"] },
+                    { name: "TRIZ创新专家", role: "TRIZ Innovation Expert", expertise: "创新方法论与专利规避", style: "突破常规", personality_traits: ["创造性", "系统创新"] },
+                    { name: "热技术专家", role: "Thermal Technology Expert", expertise: "热管理与散热技术", style: "物理导向", personality_traits: ["精确计算", "仿真能力"] },
+                    { name: "流体技术专家", role: "Fluid Technology Expert", expertise: "流体力学与管路设计", style: "物理建模", personality_traits: ["CFD分析", "实验验证"] },
+                    { name: "空气动力学专家", role: "Aerodynamics Expert", expertise: "气流设计与风道优化", style: "仿真驱动", personality_traits: ["流场分析", "噪声控制"] },
+                    { name: "结构专家", role: "Structural Expert", expertise: "机械结构设计与强度分析", style: "可靠性", personality_traits: ["CAE分析", "DFM"] },
+                    { name: "燃烧专家", role: "Combustion Expert", expertise: "燃烧技术与能效优化", style: "能源效率", personality_traits: ["安全第一", "效率优化"] },
+                    { name: "硬件工程师", role: "Hardware Engineer", expertise: "电路设计与PCB布局", style: "实际应用", personality_traits: ["动手能力强", "问题解决"] },
+                    { name: "自媒体运营专家", role: "Social Media Expert", expertise: "内容营销与用户增长", style: "创意驱动", personality_traits: ["内容创作", "数据分析"] },
+                    { name: "声学技术专家", role: "Acoustics Expert", expertise: "噪声控制与声学设计", style: "用户体验", personality_traits: ["声学测量", "降噪优化"] },
+                    { name: "电磁技术专家", role: "Electromagnetic Expert", expertise: "电磁兼容与EMI设计", style: "合规导向", personality_traits: ["EMC测试", "防护设计"] },
+                    { name: "电机技术专家", role: "Motor Technology Expert", expertise: "电机设计与控制", style: "效率优先", personality_traits: ["电机选型", "驱动优化"] },
+                    { name: "变频技术专家", role: "Inverter Technology Expert", expertise: "变频控制与电力电子", style: "节能环保", personality_traits: ["功率优化", "谐波控制"] },
+                    { name: "制冷技术专家", role: "Refrigeration Expert", expertise: "制冷循环与热泵技术", style: "能效比", personality_traits: ["系统优化", "环保冷媒"] },
+                    { name: "控制算法专家", role: "Control Algorithm Expert", expertise: "PID/MPC等控制算法", style: "数学建模", personality_traits: ["精确控制", "鲁棒性"] },
+                    { name: "智能技术专家", role: "Smart Technology Expert", expertise: "智能家居与语音交互", style: "用户友好", personality_traits: ["交互设计", "智能联动"] },
+                    { name: "传感器技术专家", role: "Sensor Technology Expert", expertise: "传感器选型与信号处理", style: "数据准确", personality_traits: ["精度分析", "抗干扰"] },
+                    { name: "材料学专家", role: "Materials Science Expert", expertise: "新材料应用与工艺", style: "性能导向", personality_traits: ["材料选型", "成本平衡"] },
+                    { name: "电化学专家", role: "Electrochemistry Expert", expertise: "电池技术与电化学反应", style: "安全可靠", personality_traits: ["电池管理", "寿命优化"] },
+                    { name: "净水技术专家", role: "Water Purification Expert", expertise: "水处理与滤芯技术", style: "健康安全", personality_traits: ["过滤效率", "水质检测"] },
+                    { name: "营销专家", role: "Marketing Expert", expertise: "市场策略与品牌推广", style: "用户洞察", personality_traits: ["市场分析", "推广策划"] },
+                    { name: "健康营养专家", role: "Health & Nutrition Expert", expertise: "健康食品与营养科学", style: "科学严谨", personality_traits: ["营养分析", "健康建议"] },
+                    { name: "医疗领域技术专家", role: "Medical Technology Expert", expertise: "医疗设备与健康监测", style: "合规安全", personality_traits: ["法规熟悉", "临床验证"] },
+                    { name: "雷达技术专家", role: "Radar Technology Expert", expertise: "雷达感应与测距技术", style: "信号处理", personality_traits: ["波形设计", "目标检测"] },
+                    { name: "自动控制技术专家", role: "Automatic Control Expert", expertise: "自动化系统与PLC", style: "系统集成", personality_traits: ["可靠性", "维护性"] },
+                    { name: "机器学习专家", role: "Machine Learning Expert", expertise: "ML模型训练与部署", style: "数据驱动", personality_traits: ["模型优化", "边缘部署"] },
+                    { name: "AI技术专家", role: "AI Technology Expert", expertise: "人工智能与大模型应用", style: "前沿探索", personality_traits: ["技术前瞻", "落地实践"] }
+                ];
+
+                const agents = ref([
+                    { ...expertPresets[0], model_name: "gpt-5.1" },
+                    { ...expertPresets[5], model_name: "gpt-5.1" },
+                    { ...expertPresets[30], model_name: "claude-sonnet-4-5-20250929" }
+                ]);
+
+                const addPresetAgent = (preset) => {
+                    agents.value.push({ ...preset, model_name: "gpt-5.1" });
+                    showPresetModal.value = false;
+                };
+
+                const removeAgent = (index) => {
+                    agents.value.splice(index, 1);
+                };
+
+                const scrollToBottom = () => {
+                    nextTick(() => {
+                        const container = document.getElementById('chat-container');
+                        if (container) container.scrollTop = container.scrollHeight;
+                    });
+                };
+
+                const startFullSession = async () => {
+                    loading.value = true;
+                    messages.value = [];
+                    completedPhases.value = [];
+
+                    try {
+                        // Start session
+                        const startRes = await fetch('/session/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                topic: topic.value,
+                                agents: agents.value,
+                                phase_rounds: phaseRounds.value
+                            })
+                        });
+
+                        if (!startRes.ok) throw new Error('Failed to start session');
+
+                        const startData = await startRes.json();
+                        sessionActive.value = true;
+                        currentPhase.value = startData.current_phase;
+                        phaseName.value = startData.phase_name;
+
+                        // Start streaming
+                        const eventSource = new EventSource('/session/stream_full');
+
+                        eventSource.addEventListener('session_start', (e) => {
+                            const data = JSON.parse(e.data);
+                            activeAgents.value = agents.value.map(a => ({ name: a.name, role: a.role, emotion: 'neutral' }));
+                        });
+
+                        eventSource.addEventListener('phase_start', (e) => {
+                            const data = JSON.parse(e.data);
+                            currentPhase.value = data.phase;
+                            phaseName.value = data.name;
+                            phaseEmoji.value = data.emoji;
+                            messages.value.push({
+                                type: 'phase',
+                                content: `进入 ${data.name}`,
+                                emoji: data.emoji
+                            });
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('message', (e) => {
+                            const data = JSON.parse(e.data);
+                            typingAgent.value = null;
+
+                            const phaseInfo = phases.value.find(p => p.id === data.phase);
+                            messages.value.push({
+                                ...data,
+                                phase_name: phaseInfo ? phaseInfo.name : ''
+                            });
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('agent_typing', (e) => {
+                            const data = JSON.parse(e.data);
+                            typingAgent.value = data.agent;
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('phase_complete', (e) => {
+                            const data = JSON.parse(e.data);
+                            if (!completedPhases.value.includes(data.phase)) {
+                                completedPhases.value.push(data.phase);
+                            }
+                        });
+
+                        eventSource.addEventListener('phase_transition', (e) => {
+                            const data = JSON.parse(e.data);
+                            currentPhase.value = data.next_phase;
+                            phaseName.value = data.next_name;
+                        });
+
+                        eventSource.addEventListener('generating_summary', (e) => {
+                            typingAgent.value = "📋 生成报告中";
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('summary', (e) => {
+                            const data = JSON.parse(e.data);
+                            typingAgent.value = null;
+                            messages.value.push({
+                                type: 'summary',
+                                content: data.content
+                            });
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('graph_update', (e) => {
+                            const data = JSON.parse(e.data);
+                            graphData.value = data;
+                            updateGraph();
+                        });
+
+                        eventSource.addEventListener('session_complete', (e) => {
+                            typingAgent.value = null;
+                            loading.value = false;
+                            completedPhases.value.push('output');
+                            eventSource.close();
+                        });
+
+                        eventSource.onerror = (e) => {
+                            console.error('SSE Error:', e);
+                            loading.value = false;
+                            eventSource.close();
+                        };
+
+                    } catch (error) {
+                        console.error('Error:', error);
+                        loading.value = false;
+                        alert('启动失败: ' + error.message);
+                    }
+                };
+
+                const updateGraph = () => {
+                    const elem = document.getElementById('graph');
+                    if (!elem) return;
+
+                    if (!graphInstance && graphData.value.nodes && graphData.value.nodes.length > 0) {
+                        graphInstance = ForceGraph()(elem)
+                            .width(elem.clientWidth)
+                            .height(elem.clientHeight)
+                            .graphData(graphData.value)
+                            .nodeLabel(node => node.label || node.id)
+                            .nodeColor(node => node.color || '#95a5a6')
+                            .nodeVal(node => node.val || 5)
+                            .linkColor(() => 'rgba(255,255,255,0.2)')
+                            .backgroundColor('transparent');
+                    } else if (graphInstance && graphData.value.nodes) {
+                        graphInstance.graphData(graphData.value);
+                    }
+                };
+
+                const togglePause = async () => {
+                    if (isPaused.value) {
+                        await fetch('/session/resume', { method: 'POST' });
+                        isPaused.value = false;
+                    } else {
+                        await fetch('/session/pause', { method: 'POST' });
+                        isPaused.value = true;
+                    }
+                };
+
+                const resetSession = async () => {
+                    if (confirm('确定要重置会话吗？所有讨论记录将被清除。')) {
+                        if (eventSource) {
+                            eventSource.close();
+                            eventSource = null;
+                        }
+                        await fetch('/session/reset', { method: 'POST' });
+                        sessionActive.value = false;
+                        loading.value = false;
+                        messages.value = [];
+                        completedPhases.value = [];
+                        currentPhase.value = null;
+                        graphData.value = { nodes: [], links: [] };
+                        graphInstance = null;
+                        isPaused.value = false;
+                        typingAgent.value = null;
+                    }
+                };
+
+                // Initialize mermaid
+                if (typeof mermaid !== 'undefined') {
+                    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+                }
+
+                // Markdown rendering function
+                const renderMarkdown = (content) => {
+                    if (!content) return '';
+                    try {
+                        return marked.parse(content);
+                    } catch (e) {
+                        return content;
+                    }
+                };
+
+                // Check if summary exists
+                const hasSummary = computed(() => {
+                    return messages.value.some(m => m.type === 'summary');
+                });
+
+                // Export summary to MD file
+                const exportSummaryMD = () => {
+                    const summaryMsg = messages.value.find(m => m.type === 'summary');
+                    if (!summaryMsg) return;
+
+                    const now = new Date();
+                    const dateStr = now.toISOString().slice(0, 10);
+
+                    let mdContent = `# 头脑风暴创新方案报告\n\n`;
+                    mdContent += `**主题**: ${topic.value}\n`;
+                    mdContent += `**生成时间**: ${now.toLocaleString('zh-CN')}\n`;
+                    mdContent += `**参与专家**: ${agents.value.map(a => a.name).join(', ')}\n\n`;
+                    mdContent += `---\n\n`;
+                    mdContent += summaryMsg.content;
+                    mdContent += `\n\n---\n\n## 讨论回顾\n\n`;
+
+                    // Add discussion history
+                    for (const msg of messages.value) {
+                        if (msg.type === 'facilitator') {
+                            mdContent += `### 🎙️ 主持人\n${msg.content}\n\n`;
+                        } else if (msg.type === 'agent') {
+                            mdContent += `### 👤 ${msg.sender} (${msg.role})\n${msg.content}\n\n`;
+                        }
+                    }
+
+                    downloadFile(mdContent, `brainstorm_${dateStr}.md`, 'text/markdown');
+                };
+
+                // Export knowledge graph to Mermaid MD
+                const exportGraphMermaid = () => {
+                    if (!graphData.value.nodes || graphData.value.nodes.length === 0) return;
+
+                    const now = new Date();
+                    const dateStr = now.toISOString().slice(0, 10);
+
+                    let mermaidCode = 'graph TD\n';
+
+                    // Add nodes
+                    const nodeIds = {};
+                    graphData.value.nodes.forEach((node, i) => {
+                        const safeId = `N${i}`;
+                        nodeIds[node.id] = safeId;
+                        const label = (node.label || node.id).replace(/"/g, "'").substring(0, 30);
+
+                        if (node.type === 'agent') {
+                            mermaidCode += `    ${safeId}[["👤 ${label}"]]\n`;
+                        } else if (node.type === 'keyword') {
+                            mermaidCode += `    ${safeId}(("💡 ${label}"))\n`;
+                        } else {
+                            mermaidCode += `    ${safeId}["${label}"]\n`;
+                        }
+                    });
+
+                    mermaidCode += '\n';
+
+                    // Add links
+                    graphData.value.links.forEach(link => {
+                        const sourceId = nodeIds[typeof link.source === 'object' ? link.source.id : link.source];
+                        const targetId = nodeIds[typeof link.target === 'object' ? link.target.id : link.target];
+                        if (sourceId && targetId) {
+                            mermaidCode += `    ${sourceId} --> ${targetId}\n`;
+                        }
+                    });
+
+                    // Style definitions
+                    mermaidCode += '\n    classDef agent fill:#ff6b6b,stroke:#fff,color:#fff\n';
+                    mermaidCode += '    classDef keyword fill:#ffe66d,stroke:#333,color:#333\n';
+                    mermaidCode += '    classDef message fill:#4ecdc4,stroke:#fff,color:#fff\n';
+
+                    // Apply styles
+                    graphData.value.nodes.forEach((node, i) => {
+                        const safeId = `N${i}`;
+                        if (node.type === 'agent') {
+                            mermaidCode += `    class ${safeId} agent\n`;
+                        } else if (node.type === 'keyword') {
+                            mermaidCode += `    class ${safeId} keyword\n`;
+                        } else {
+                            mermaidCode += `    class ${safeId} message\n`;
+                        }
+                    });
+
+                    let mdContent = `# 头脑风暴知识图谱\n\n`;
+                    mdContent += `**主题**: ${topic.value}\n`;
+                    mdContent += `**生成时间**: ${now.toLocaleString('zh-CN')}\n\n`;
+                    mdContent += `## 图谱可视化\n\n`;
+                    mdContent += '```mermaid\n' + mermaidCode + '```\n\n';
+                    mdContent += `## 节点说明\n\n`;
+                    mdContent += `- 🔴 **红色节点**: 参与专家\n`;
+                    mdContent += `- 🟡 **黄色节点**: 关键词/概念\n`;
+                    mdContent += `- 🔵 **青色节点**: 讨论内容\n`;
+
+                    downloadFile(mdContent, `knowledge_graph_${dateStr}.md`, 'text/markdown');
+                };
+
+                // Helper function to download file
+                const downloadFile = (content, filename, mimeType) => {
+                    const blob = new Blob([content], { type: mimeType + ';charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                };
+
+                return {
+                    sessionActive, loading, topic, messages, typingAgent,
+                    currentPhase, phaseName, phaseEmoji, completedPhases,
+                    activeAgents, graphData, showPresetModal, phases,
+                    agents, expertPresets, phaseRounds, isPaused, hasSummary,
+                    addPresetAgent, removeAgent, startFullSession,
+                    increaseRounds, decreaseRounds, togglePause, resetSession,
+                    renderMarkdown, exportSummaryMD, exportGraphMermaid
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
