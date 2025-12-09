@@ -545,9 +545,12 @@
                 // New feature state
                 const statistics = ref({});
                 const onlineUsers = ref([]);
-                const userName = ref("用户");
+                const userName = ref("用户" + Math.floor(Math.random() * 1000));
                 const userMessage = ref("");
                 let websocket = null;
+
+                // Session Management
+                const sessionId = ref(new URLSearchParams(window.location.search).get('room') || 'default');
 
                 const phases = ref([
                     { id: "opening", name: "启动会话", emoji: "🎬", defaultRounds: 0 },
@@ -644,6 +647,38 @@
                     });
                 };
 
+                // WebSocket Connection
+                const connectWebSocket = () => {
+                    if (websocket) return;
+
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws/${encodeURIComponent(userName.value)}?session_id=${sessionId.value}`;
+
+                    console.log("Connecting to WebSocket:", wsUrl);
+                    websocket = new WebSocket(wsUrl);
+
+                    websocket.onopen = () => {
+                        console.log("WebSocket Connected");
+                    };
+
+                    websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'human_message') {
+                            // Handle other users' messages
+                            if (data.user_name !== userName.value) {
+                                messages.value.push({
+                                    type: 'human',
+                                    sender: `👤 ${data.user_name}`,
+                                    content: data.content
+                                });
+                                scrollToBottom();
+                            }
+                        } else if (data.type === 'online_users') {
+                            onlineUsers.value = data.users;
+                        }
+                    };
+                };
+
                 const startFullSession = async () => {
                     loading.value = true;
                     messages.value = [];
@@ -655,6 +690,7 @@
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
+                                session_id: sessionId.value,
                                 topic: topic.value,
                                 agents: agents.value,
                                 phase_rounds: phaseRounds.value
@@ -669,7 +705,10 @@
                         phaseName.value = startData.phase_name;
 
                         // Start streaming
-                        const eventSource = new EventSource('/session/stream_full');
+                        const eventSource = new EventSource(`/session/stream_full?session_id=${sessionId.value}`);
+
+                        // Connect WebSocket for collaboration
+                        connectWebSocket();
 
                         eventSource.addEventListener('session_start', (e) => {
                             const data = JSON.parse(e.data);

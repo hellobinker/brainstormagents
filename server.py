@@ -11,8 +11,8 @@ from features.role_switcher import DynamicRoleSwitcher
 from features.emotion_engine import EmotionalIntelligenceEngine
 from features.knowledge import CrossDomainConnector
 from features.visualization import RealTimeVisualizer
-from features.websocket_manager import ConnectionManager
-from features.mention_parser import MentionParser
+from core.session_manager import session_manager, SessionState
+from features.websocket_manager import ws_manager  # Use global singleton
 from features.statistics import SessionStatistics
 import uvicorn
 import os
@@ -23,6 +23,7 @@ import uuid
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.params import Query
 
 app = FastAPI()
 
@@ -41,27 +42,15 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 async def read_index():
     return FileResponse('frontend/index.html')
 
-# Global state
-session: Optional[BrainstormingSession] = None
-facilitator: Optional[Facilitator] = None
-role_switcher = DynamicRoleSwitcher()
-emotion_engine = EmotionalIntelligenceEngine()
-knowledge_connector = CrossDomainConnector()
-visualizer = RealTimeVisualizer()
-llm_client = None
-is_paused = False  # Pause state
-
 # New feature instances
-ws_manager = ConnectionManager()
 mention_parser = MentionParser()
-session_stats = SessionStatistics()
 
-# Advanced techniques (initialized after llm_client)
-creativity_techniques = None
-idea_evolution = None
-parallel_divergence = None
-chain_deepening = None
-debate_mode = None
+@app.post("/session/create")
+def create_session():
+    """Create a new brainstorming session"""
+    session_id = session_manager.create_session()
+    return {"session_id": session_id}
+
 
 # Data Models
 class AgentConfig(BaseModel):
@@ -73,6 +62,7 @@ class AgentConfig(BaseModel):
     model_name: str = "gpt-5.1"
 
 class StartSessionRequest(BaseModel):
+    session_id: str = "default"  # Add session_id
     topic: str
     agents: List[AgentConfig]
     api_key: Optional[str] = None
@@ -80,7 +70,16 @@ class StartSessionRequest(BaseModel):
     phase_rounds: Optional[Dict[str, int]] = None  # Custom rounds per phase
 
 class RunPhaseRequest(BaseModel):
+    session_id: str = "default"
     phase: Optional[str] = None
+
+def get_session_or_create(session_id: str) -> SessionState:
+    state = session_manager.get_session(session_id)
+    if not state:
+        # Auto-create if not exists (for simplified UX)
+        session_manager.sessions[session_id] = SessionState(session_id)
+        state = session_manager.sessions[session_id]
+    return state
 
 def create_sse_message(event: str, data: dict) -> str:
     """Create SSE formatted message"""
@@ -88,7 +87,7 @@ def create_sse_message(event: str, data: dict) -> str:
 
 @app.post("/session/start")
 def start_session(request: StartSessionRequest):
-    global session, llm_client, visualizer, facilitator
+    state = get_session_or_create(request.session_id)
     
     # Initialize LLM Client
     DEFAULT_API_KEY = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
@@ -97,34 +96,6 @@ def start_session(request: StartSessionRequest):
     api_key = request.api_key or os.environ.get("OPENAI_API_KEY") or DEFAULT_API_KEY
     base_url = request.base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
     
-    llm_client = LLMClient(api_key=api_key, base_url=base_url)
-    
-    # Initialize advanced techniques
-    from features.advanced_techniques import (
-        CreativityTechniques, IdeaEvolution, ParallelDivergence, 
-        ChainDeepening, DebateMode
-    )
-    global creativity_techniques, idea_evolution, parallel_divergence, chain_deepening, debate_mode
-    creativity_techniques = CreativityTechniques(llm_client)
-    idea_evolution = IdeaEvolution(llm_client)
-    parallel_divergence = ParallelDivergence(llm_client)
-    chain_deepening = ChainDeepening(llm_client)
-    debate_mode = DebateMode(llm_client)
-    
-    # Create Agents
-    agents = []
-    for config in request.agents:
-        agent = Agent(
-            name=config.name,
-            role=config.role,
-            expertise=config.expertise,
-            style=config.style,
-            personality_traits=config.personality_traits,
-            model_name=config.model_name
-        )
-        agents.append(agent)
-    
-    # Initialize Session and Facilitator with custom rounds
     session = BrainstormingSession(request.topic, agents, llm_client)
     facilitator = Facilitator(
         llm_client, 
@@ -137,51 +108,53 @@ def start_session(request: StartSessionRequest):
         "message": "Session started",
         "topic": request.topic,
         "agent_count": len(agents),
-        "current_phase": facilitator.current_phase.value,
-        "phase_name": PHASE_CONFIG[facilitator.current_phase]["name"],
+        "current_phase": state.facilitator.current_phase.value,
+        "phase_name": PHASE_CONFIG[state.facilitator.current_phase]["name"],
         "phase_rounds": request.phase_rounds or {}
     }
 
-async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerator[str, None]:
-    """Generate streaming responses for a phase"""
-    global session, facilitator, visualizer
-    
-    if not facilitator or not session:
-        yield create_sse_message("error", {"message": "Session not started"})
+async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None]:
+    """Generate streaming events for a single phase using SessionState"""
+    if not state.session or not state.facilitator:
         return
-    
-    phase_config = facilitator.get_phase_config()
+        
+    topic = state.session.topic
+    agents = state.session.agents
+    phase_config = state.facilitator.get_phase_config()
+    phase_rounds = state.facilitator.phase_rounds.get(state.facilitator.current_phase.value, 1)
     phase_name = phase_config["name"]
-    phase_emoji = phase_config["emoji"]
-    phase_rounds = phase_config["rounds"]
     
-    # 1. Facilitator opening for this phase
+    # 1. Phase Start
     yield create_sse_message("phase_start", {
-        "phase": facilitator.current_phase.value,
+        "phase": state.facilitator.current_phase.value,
         "name": phase_name,
-        "emoji": phase_emoji
+        "emoji": phase_config["emoji"],
+        "description": phase_config["description"]
     })
     
-    await asyncio.sleep(0.1)  # Small delay for UI
-    
-    # Get facilitator's opening statement
-    facilitator_message = facilitator.get_phase_opening(topic, [a.name for a in agents])
+    # Facilitator Intro
+    # Use state.llm_client
+    intro = state.llm_client.get_completion(
+        system_prompt=state.facilitator.role_prompt,
+        user_prompt=f"Please introduce the '{phase_name}' phase for the topic: {topic}. Be brief and encouraging.",
+        model="gpt-5.1"
+    )
     
     yield create_sse_message("message", {
-        "sender": "🎙️ 主持人",
-        "content": facilitator_message,
+        "sender": "主持人",
+        "content": intro,
         "type": "facilitator",
-        "phase": facilitator.current_phase.value
+        "phase": state.facilitator.current_phase.value
     })
     
-    # Add to session history
-    session.add_message(Message("🎙️ 主持人", facilitator_message, {"phase": facilitator.current_phase.value}))
+    state.session.add_message(Message("主持人", intro, {"type": "facilitator_intro", "phase": state.facilitator.current_phase.value}))
+    state.session_stats.record_message("主持人", intro, {"type": "facilitator"})
     
     await asyncio.sleep(0.3)
     
     # 2. If this phase has agent rounds, run them
     if phase_rounds > 0:
-        agent_prompt = facilitator.get_agent_prompt_for_phase(topic)
+        agent_prompt = state.facilitator.get_agent_prompt_for_phase(topic)
         
         for round_num in range(phase_rounds):
             if phase_rounds > 1:
@@ -190,10 +163,10 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
             
             for agent in agents:
                 # Update emotions
-                emotion_engine.update_emotions([agent], session.history)
+                state.emotion_engine.update_emotions([agent], state.session.history)
                 
                 # Build context
-                history_text = "\n".join([f"{m.sender}: {m.content}" for m in session.history[-15:]])
+                history_text = "\n".join([f"{m.sender}: {m.content}" for m in state.session.history[-15:]])
                 
                 full_prompt = f"""{agent_prompt}
 
@@ -202,9 +175,8 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
 
 请开始你的发言："""
                 
-                # Check if paused
-                global is_paused
-                while is_paused:
+                # Check if paused (using state.is_paused)
+                while state.is_paused:
                     yield create_sse_message("paused", {"status": "paused"})
                     await asyncio.sleep(1)
                 
@@ -218,7 +190,7 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                 
                 # Stream the response token by token
                 full_response = ""
-                for chunk in llm_client.get_completion_stream(
+                for chunk in state.llm_client.get_completion_stream(
                     system_prompt=agent.get_system_prompt(),
                     user_prompt=full_prompt,
                     model=agent.model_name
@@ -233,10 +205,10 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                         "role": agent.role,
                         "emotion": agent.current_emotion,
                         "model": agent.model_name,
-                        "phase": facilitator.current_phase.value
+                        "phase": state.facilitator.current_phase.value
                     })
                     
-                    await asyncio.sleep(0.05)  # Increased delay to ensure visible streaming effect
+                    await asyncio.sleep(0.05)  # Streaming delay
                 
                 # Send completion signal
                 yield create_sse_message("message_complete", {
@@ -246,89 +218,94 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                     "role": agent.role,
                     "emotion": agent.current_emotion,
                     "model": agent.model_name,
-                    "phase": facilitator.current_phase.value
+                    "phase": state.facilitator.current_phase.value
                 })
                 
-                session.add_message(Message(agent.name, full_response, {
-                    "phase": facilitator.current_phase.value,
+                state.session.add_message(Message(agent.name, full_response, {
+                    "phase": state.facilitator.current_phase.value,
                     "role": agent.role,
-                    "round": session.rounds
+                    "round": state.session.rounds
                 }))
+                state.session_stats.record_message(agent.name, full_response, {
+                    "role": agent.role, 
+                    "emotion": agent.current_emotion
+                })
                 
                 # Update visualization and send graph data
-                visualizer.update_graph(session.history)
-                graph_json = visualizer.export_data()
+                state.visualizer.update_graph(state.session.history)
+                graph_json = state.visualizer.export_data()
                 graph_data = json.loads(graph_json)
                 yield create_sse_message("graph_update", graph_data)
                 
                 await asyncio.sleep(0.2)
         
-        session.rounds += 1
+        state.session.rounds += 1
     
     # 3. Phase complete
     yield create_sse_message("phase_complete", {
-        "phase": facilitator.current_phase.value,
+        "phase": state.facilitator.current_phase.value,
         "name": phase_name
     })
 
 @app.get("/session/stream_phase")
-async def stream_phase():
+async def stream_phase(session_id: str = "default"):
     """Stream a single phase of the brainstorming session"""
-    global session, facilitator
-    
-    if not session or not facilitator:
-        return {"error": "Session not started"}
-    
-    return StreamingResponse(
-        generate_phase_stream(session.topic, session.agents),
-        media_type="text/event-stream"
-    )
+    try:
+        state = get_session_or_create(session_id)
+        if not state.session or not state.facilitator:
+            return {"error": "Session not started"}
+        
+        return StreamingResponse(
+            generate_phase_stream(state),
+            media_type="text/event-stream"
+        )
+    except HTTPException as e:
+        return {"error": e.detail}
 
 @app.post("/session/next_phase")
-async def next_phase():
+async def next_phase(request: RunPhaseRequest):
     """Advance to the next phase"""
-    global facilitator
+    state = get_session_or_create(request.session_id)
     
-    if not facilitator:
+    if not state.facilitator:
         raise HTTPException(status_code=400, detail="Session not started")
     
-    has_more = facilitator.advance_phase()
-    phase_config = facilitator.get_phase_config()
+    has_more = state.facilitator.advance_phase()
+    phase_config = state.facilitator.get_phase_config()
     
     return {
         "has_more": has_more,
-        "current_phase": facilitator.current_phase.value,
+        "current_phase": state.facilitator.current_phase.value,
         "phase_name": phase_config["name"],
         "phase_emoji": phase_config["emoji"]
     }
 
-async def run_full_session_stream() -> AsyncGenerator[str, None]:
+async def run_full_session_stream(session_id: str = "default") -> AsyncGenerator[str, None]:
     """Run the complete brainstorming session with all phases"""
-    global session, facilitator
+    state = get_session_or_create(session_id)
     
-    if not session or not facilitator:
-        yield create_sse_message("error", {"message": "Session not started"})
+    if not state.session or not state.facilitator:
+        yield create_sse_message("error", {"message": "Session not initialized"})
         return
-    
+
     yield create_sse_message("session_start", {
-        "topic": session.topic,
-        "agent_count": len(session.agents)
+        "topic": state.session.topic,
+        "agent_count": len(state.session.agents)
     })
     
     # Run through all phases
     while True:
-        async for msg in generate_phase_stream(session.topic, session.agents):
+        async for msg in generate_phase_stream(state):
             yield msg
         
         await asyncio.sleep(0.5)
         
-        has_more = facilitator.advance_phase()
-        if not has_more:
+        if not state.facilitator.advance_phase():
             break
         
         yield create_sse_message("phase_transition", {
-            "next_phase": facilitator.current_phase.value,
-            "next_name": PHASE_CONFIG[facilitator.current_phase]["name"]
+            "next_phase": state.facilitator.current_phase.value,
+            "next_name": PHASE_CONFIG[state.facilitator.current_phase]["name"]
         })
         
         await asyncio.sleep(0.3)
@@ -336,32 +313,38 @@ async def run_full_session_stream() -> AsyncGenerator[str, None]:
     # Generate final summary
     yield create_sse_message("generating_summary", {"message": "正在生成创新方案报告..."})
     
-    history_data = [{"sender": m.sender, "content": m.content} for m in session.history]
-    summary = facilitator.generate_final_summary(session.topic, history_data)
+    history_data = [{"sender": m.sender, "content": m.content} for m in state.session.history]
     
-    session.add_message(Message("📋 创新方案报告", summary, {"type": "summary"}))
+    # Use state.llm_client for summary generation if needed inside facilitator, 
+    # but Facilitator is initialized with llm_client.
+    summary = state.facilitator.generate_final_summary(state.session.topic, history_data)
     
-    yield create_sse_message("summary", {
-        "content": summary
-    })
+    state.session.add_message(Message("📋 创新方案报告", summary, {"type": "summary"}))
+    state.session_stats.record_message("System", summary, {"type": "summary"})
     
-    yield create_sse_message("session_complete", {
-        "total_messages": len(session.history),
-        "total_rounds": session.rounds
-    })
+    yield create_sse_message("summary", {"content": summary})
+    
+    # Final cleanup
+    yield create_sse_message("session_complete", {"topic": state.session.topic})
 
 @app.get("/session/stream_full")
-async def stream_full_session():
-    """Stream the complete brainstorming session"""
-    global session, facilitator
-    
-    if not session or not facilitator:
-        return {"error": "Session not started"}
-    
-    return StreamingResponse(
-        run_full_session_stream(),
-        media_type="text/event-stream"
-    )
+async def stream_full(session_id: str = "default"):
+    """Stream the full session"""
+    try:
+        # Check if session exists first to return proper error
+        state = session_manager.get_session(session_id)
+        if not state or not state.session or not state.facilitator:
+             # If default and not exist, return error, user must call start first
+             if session_id == "default":
+                 return {"error": "Default session not started. Please start a session first."}
+             return {"error": "Session not found"}
+
+        return StreamingResponse(
+            run_full_session_stream(session_id),
+            media_type="text/event-stream"
+        )
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/session/state")
 def get_state():
@@ -648,10 +631,13 @@ def list_techniques():
 # ============ WebSocket Multi-User Endpoints ============
 
 @app.websocket("/ws/{user_name}")
-async def websocket_endpoint(websocket: WebSocket, user_name: str):
+async def websocket_endpoint(websocket: WebSocket, user_name: str, session_id: str = "default"):
     """WebSocket端点 - 支持多用户实时协作"""
+    # Verify session exists
+    state = get_session_or_create(session_id)
+    
     user_id = str(uuid.uuid4())
-    await ws_manager.connect(websocket, user_id, user_name)
+    await ws_manager.connect(websocket, session_id, user_id, user_name)
     
     try:
         while True:
@@ -664,12 +650,12 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str):
                 content = data.get("content", "")
                 
                 # 检查@提及
-                if mention_parser.has_mention(content) and session:
-                    agent_names = [a.name for a in session.agents]
+                if mention_parser.has_mention(content) and state.session:
+                    agent_names = [a.name for a in state.session.agents]
                     mentioned, is_all = mention_parser.get_mentioned_agents(content, agent_names)
                     
                     # 广播人类消息
-                    await ws_manager.broadcast({
+                    await ws_manager.broadcast(session_id, {
                         "type": "human_message",
                         "user_id": user_id,
                         "user_name": user_name,
@@ -679,75 +665,77 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str):
                     
                     # 添加到会话历史
                     msg = Message(f"👤 {user_name}", content, {"type": "human", "mentions": mentioned})
-                    session.add_message(msg)
-                    session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
+                    state.session.add_message(msg)
+                    state.session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
                     
                     # 触发被@的智能体响应
                     for agent_name in mentioned:
-                        agent = next((a for a in session.agents if a.name == agent_name), None)
-                        if agent and llm_client:
-                            context = "\n".join([f"{m.sender}: {m.content}" for m in session.history[-10:]])
+                        agent = next((a for a in state.session.agents if a.name == agent_name), None)
+                        if agent and state.llm_client:
+                            context = "\n".join([f"{m.sender}: {m.content}" for m in state.session.history[-10:]])
                             prompt = mention_parser.create_mention_prompt(user_name, content, agent_name, context)
                             
-                            response = llm_client.get_completion(
+                            response = state.llm_client.get_completion(
                                 system_prompt=agent.get_system_prompt(),
                                 user_prompt=prompt,
                                 model=agent.model_name
                             )
                             
+                            
                             # 广播智能体响应
-                            await ws_manager.broadcast({
+                            await ws_manager.broadcast(session_id, {
                                 "type": "agent_response",
-                                "agent": agent_name,
+                                "sender": agent.name,
                                 "content": response,
-                                "reply_to": user_name
+                                "role": agent.role
                             })
                             
-                            session.add_message(Message(agent_name, response, {"type": "mention_response"}))
-                            session_stats.record_message(agent_name, response, {"type": "mention_response"})
-                            session_stats.record_mention(f"👤 {user_name}", agent_name)
+                            state.session.add_message(Message(agent.name, response, {"role": agent.role}))
+                            state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
+                
+                # 如果没有提及，也是一种通用的参与
                 else:
-                    # 普通聊天消息
-                    await ws_manager.broadcast({
+                    # 广播消息
+                    await ws_manager.broadcast(session_id, {
                         "type": "human_message",
                         "user_id": user_id,
                         "user_name": user_name,
                         "content": content
                     })
-                    
-                    if session:
-                        msg = Message(f"👤 {user_name}", content, {"type": "human"})
-                        session.add_message(msg)
-                        session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
+                    if state.session:
+                         state.session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
             
             elif msg_type == "typing":
-                await ws_manager.broadcast({
+                # 广播输入状态
+                await ws_manager.broadcast(session_id, {
                     "type": "user_typing",
                     "user_id": user_id,
                     "user_name": user_name
                 }, exclude={user_id})
-            
+                
             elif msg_type == "request_users":
-                await ws_manager.send_personal_message({
+                # 发送在线用户列表
+                await ws_manager.send_personal_message(session_id, {
                     "type": "online_users",
-                    "users": ws_manager.get_online_users()
+                    "users": ws_manager.get_online_users(session_id)
                 }, user_id)
                 
     except WebSocketDisconnect:
-        user_name = ws_manager.disconnect(user_id)
-        await ws_manager.broadcast({
+        user_name = ws_manager.disconnect(session_id, user_id)
+        # 广播离开消息
+        await ws_manager.broadcast(session_id, {
             "type": "user_left",
             "user_id": user_id,
             "user_name": user_name,
-            "online_count": ws_manager.get_online_count()
+            "online_count": ws_manager.get_online_count(session_id)
         })
 
 @app.get("/ws/users")
-def get_online_users():
-    """获取在线用户列表"""
+def get_online_users(session_id: str = "default"):
+    """Get list of online users"""
     return {
-        "online_count": ws_manager.get_online_count(),
-        "users": ws_manager.get_online_users()
+        "online_count": ws_manager.get_online_count(session_id),
+        "users": ws_manager.get_online_users(session_id)
     }
 
 # ============ @Mention Endpoints ============
@@ -758,83 +746,78 @@ class MentionRequest(BaseModel):
 
 @app.post("/session/mention")
 async def handle_mention(request: MentionRequest):
-    """处理@提及消息（或普通人类消息）"""
-    global session, llm_client
+    """Handle @mention from human user"""
+    state = get_session_or_create(request.session_id)
     
-    if not session:
-        raise HTTPException(status_code=400, detail="Session not started")
+    # 记录人类消息
+    msg = Message(f"👤 {request.sender}", request.content, {"type": "human"})
+    if state.session:
+        state.session.add_message(msg)
+        state.session_stats.record_message(f"👤 {request.sender}", request.content, {"type": "human"})
     
-    # Always add user message to session history first
-    user_msg = Message(f"👤 {request.sender}", request.content, {"type": "human"})
-    session.add_message(user_msg)
-    session_stats.record_message(f"👤 {request.sender}", request.content, {"type": "human"})
-    
-    # Broadcast to WebSocket clients
-    await ws_manager.broadcast({
-        "type": "human_message",
-        "sender": request.sender,
-        "content": request.content
-    })
-    
-    # Check for @mentions
-    agent_names = [a.name for a in session.agents]
-    mentioned, is_all = mention_parser.get_mentioned_agents(request.content, agent_names)
-    
-    responses = []
-    
-    if mentioned:
+    # 解析@提及
+    if state.session and mention_parser.has_mention(request.content):
+        agent_names = [a.name for a in state.session.agents]
+        mentioned, is_all = mention_parser.get_mentioned_agents(request.content, agent_names)
+        
+        # 广播人类消息 (via WebSocket if connected)
+        await ws_manager.broadcast(request.session_id, {
+            "type": "human_message",
+            "user_name": request.sender,
+            "content": request.content,
+            "mentions": mentioned
+        })
+        
+        # 触发智能体响应
         for agent_name in mentioned:
-            agent = next((a for a in session.agents if a.name == agent_name), None)
-            if agent and llm_client:
-                context = "\n".join([f"{m.sender}: {m.content}" for m in session.history[-10:]])
+            agent = next((a for a in state.session.agents if a.name == agent_name), None)
+            
+            if agent and state.llm_client:
+                # Build context
+                context = "\n".join([f"{m.sender}: {m.content}" for m in state.session.history[-10:]])
                 prompt = mention_parser.create_mention_prompt(request.sender, request.content, agent_name, context)
                 
-                response = llm_client.get_completion(
+                # Stream or generate response
+                # Note: Currently synchronous generation for simplicity in this endpoint, 
+                # but could use SSE if we want streaming for mentions too.
+                # For now, we'll use non-streaming update to state.
+                
+                response = state.llm_client.get_completion(
                     system_prompt=agent.get_system_prompt(),
                     user_prompt=prompt,
                     model=agent.model_name
                 )
                 
-                # 添加到历史
-                session.add_message(Message(agent_name, response, {"type": "mention_response", "reply_to": request.sender}))
-                session_stats.record_message(agent_name, response, {"type": "mention_response"})
-                session_stats.record_mention(request.sender, agent_name)
+                # Record response
+                state.session.add_message(Message(agent.name, response, {"role": agent.role}))
+                state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
                 
-                responses.append({
-                    "agent": agent_name,
-                    "response": response
-                })
-                
-                # 广播给WebSocket客户端
-                await ws_manager.broadcast({
+                # Broadcast response via WebSocket
+                await ws_manager.broadcast(request.session_id, {
                     "type": "agent_response",
-                    "agent": agent_name,
+                    "sender": agent.name,
                     "content": response,
-                    "reply_to": request.sender
+                    "role": agent.role
                 })
+                
+        return {"status": "processed", "mentions": mentioned}
     
-    return {
-        "status": "success",
-        "mentioned_agents": mentioned,
-        "responses": responses
-    }
+    # 如果没有 Session，或者没有 Mention
+    return {"status": "recorded"}
 
 # ============ Statistics Endpoints ============
 
 @app.get("/statistics")
-def get_statistics():
+def get_statistics(session_id: str = "default"):
     """获取会话统计数据"""
-    return session_stats.get_summary()
+    state = get_session_or_create(session_id)
+    return state.session_stats.get_summary()
 
 @app.get("/statistics/detailed")
-def get_detailed_statistics():
+def get_detailed_statistics(session_id: str = "default"):
     """获取详细统计数据"""
-    return {
-        "summary": session_stats.get_summary(),
-        "phases": session_stats.get_phase_breakdown(),
-        "interaction_network": session_stats.get_interaction_network(),
-        "timeline": session_stats.get_timeline_data()[-50:]
-    }
+    state = get_session_or_create(session_id)
+    return state.session_stats.to_dict()
 
 @app.get("/statistics/export")
 def export_statistics():
