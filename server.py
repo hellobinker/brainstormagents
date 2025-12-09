@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, AsyncGenerator
@@ -11,10 +11,14 @@ from features.role_switcher import DynamicRoleSwitcher
 from features.emotion_engine import EmotionalIntelligenceEngine
 from features.knowledge import CrossDomainConnector
 from features.visualization import RealTimeVisualizer
+from features.websocket_manager import ConnectionManager
+from features.mention_parser import MentionParser
+from features.statistics import SessionStatistics
 import uvicorn
 import os
 import json
 import asyncio
+import uuid
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -46,6 +50,11 @@ knowledge_connector = CrossDomainConnector()
 visualizer = RealTimeVisualizer()
 llm_client = None
 is_paused = False  # Pause state
+
+# New feature instances
+ws_manager = ConnectionManager()
+mention_parser = MentionParser()
+session_stats = SessionStatistics()
 
 # Advanced techniques (initialized after llm_client)
 creativity_techniques = None
@@ -620,5 +629,238 @@ def list_techniques():
         ]
     }
 
+# ============ WebSocket Multi-User Endpoints ============
+
+@app.websocket("/ws/{user_name}")
+async def websocket_endpoint(websocket: WebSocket, user_name: str):
+    """WebSocket端点 - 支持多用户实时协作"""
+    user_id = str(uuid.uuid4())
+    await ws_manager.connect(websocket, user_id, user_name)
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            
+            # 处理不同类型的消息
+            msg_type = data.get("type", "chat")
+            
+            if msg_type == "chat":
+                content = data.get("content", "")
+                
+                # 检查@提及
+                if mention_parser.has_mention(content) and session:
+                    agent_names = [a.name for a in session.agents]
+                    mentioned, is_all = mention_parser.get_mentioned_agents(content, agent_names)
+                    
+                    # 广播人类消息
+                    await ws_manager.broadcast({
+                        "type": "human_message",
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "content": content,
+                        "mentions": mentioned
+                    })
+                    
+                    # 添加到会话历史
+                    msg = Message(f"👤 {user_name}", content, {"type": "human", "mentions": mentioned})
+                    session.add_message(msg)
+                    session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
+                    
+                    # 触发被@的智能体响应
+                    for agent_name in mentioned:
+                        agent = next((a for a in session.agents if a.name == agent_name), None)
+                        if agent and llm_client:
+                            context = "\n".join([f"{m.sender}: {m.content}" for m in session.history[-10:]])
+                            prompt = mention_parser.create_mention_prompt(user_name, content, agent_name, context)
+                            
+                            response = llm_client.get_completion(
+                                system_prompt=agent.get_system_prompt(),
+                                user_prompt=prompt,
+                                model=agent.model_name
+                            )
+                            
+                            # 广播智能体响应
+                            await ws_manager.broadcast({
+                                "type": "agent_response",
+                                "agent": agent_name,
+                                "content": response,
+                                "reply_to": user_name
+                            })
+                            
+                            session.add_message(Message(agent_name, response, {"type": "mention_response"}))
+                            session_stats.record_message(agent_name, response, {"type": "mention_response"})
+                            session_stats.record_mention(f"👤 {user_name}", agent_name)
+                else:
+                    # 普通聊天消息
+                    await ws_manager.broadcast({
+                        "type": "human_message",
+                        "user_id": user_id,
+                        "user_name": user_name,
+                        "content": content
+                    })
+                    
+                    if session:
+                        msg = Message(f"👤 {user_name}", content, {"type": "human"})
+                        session.add_message(msg)
+                        session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
+            
+            elif msg_type == "typing":
+                await ws_manager.broadcast({
+                    "type": "user_typing",
+                    "user_id": user_id,
+                    "user_name": user_name
+                }, exclude={user_id})
+            
+            elif msg_type == "request_users":
+                await ws_manager.send_personal_message({
+                    "type": "online_users",
+                    "users": ws_manager.get_online_users()
+                }, user_id)
+                
+    except WebSocketDisconnect:
+        user_name = ws_manager.disconnect(user_id)
+        await ws_manager.broadcast({
+            "type": "user_left",
+            "user_id": user_id,
+            "user_name": user_name,
+            "online_count": ws_manager.get_online_count()
+        })
+
+@app.get("/ws/users")
+def get_online_users():
+    """获取在线用户列表"""
+    return {
+        "online_count": ws_manager.get_online_count(),
+        "users": ws_manager.get_online_users()
+    }
+
+# ============ @Mention Endpoints ============
+
+class MentionRequest(BaseModel):
+    sender: str
+    content: str
+
+@app.post("/session/mention")
+async def handle_mention(request: MentionRequest):
+    """处理@提及消息（或普通人类消息）"""
+    global session, llm_client
+    
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not started")
+    
+    # Always add user message to session history first
+    user_msg = Message(f"👤 {request.sender}", request.content, {"type": "human"})
+    session.add_message(user_msg)
+    session_stats.record_message(f"👤 {request.sender}", request.content, {"type": "human"})
+    
+    # Broadcast to WebSocket clients
+    await ws_manager.broadcast({
+        "type": "human_message",
+        "sender": request.sender,
+        "content": request.content
+    })
+    
+    # Check for @mentions
+    agent_names = [a.name for a in session.agents]
+    mentioned, is_all = mention_parser.get_mentioned_agents(request.content, agent_names)
+    
+    responses = []
+    
+    if mentioned:
+        for agent_name in mentioned:
+            agent = next((a for a in session.agents if a.name == agent_name), None)
+            if agent and llm_client:
+                context = "\n".join([f"{m.sender}: {m.content}" for m in session.history[-10:]])
+                prompt = mention_parser.create_mention_prompt(request.sender, request.content, agent_name, context)
+                
+                response = llm_client.get_completion(
+                    system_prompt=agent.get_system_prompt(),
+                    user_prompt=prompt,
+                    model=agent.model_name
+                )
+                
+                # 添加到历史
+                session.add_message(Message(agent_name, response, {"type": "mention_response", "reply_to": request.sender}))
+                session_stats.record_message(agent_name, response, {"type": "mention_response"})
+                session_stats.record_mention(request.sender, agent_name)
+                
+                responses.append({
+                    "agent": agent_name,
+                    "response": response
+                })
+                
+                # 广播给WebSocket客户端
+                await ws_manager.broadcast({
+                    "type": "agent_response",
+                    "agent": agent_name,
+                    "content": response,
+                    "reply_to": request.sender
+                })
+    
+    return {
+        "status": "success",
+        "mentioned_agents": mentioned,
+        "responses": responses
+    }
+
+# ============ Statistics Endpoints ============
+
+@app.get("/statistics")
+def get_statistics():
+    """获取会话统计数据"""
+    return session_stats.get_summary()
+
+@app.get("/statistics/detailed")
+def get_detailed_statistics():
+    """获取详细统计数据"""
+    return {
+        "summary": session_stats.get_summary(),
+        "phases": session_stats.get_phase_breakdown(),
+        "interaction_network": session_stats.get_interaction_network(),
+        "timeline": session_stats.get_timeline_data()[-50:]
+    }
+
+@app.get("/statistics/export")
+def export_statistics():
+    """导出统计数据"""
+    return {
+        "json_data": session_stats.export_json(),
+        "csv_data": session_stats.export_csv_data()
+    }
+
+@app.post("/statistics/reset")
+def reset_statistics():
+    """重置统计数据"""
+    session_stats.reset()
+    return {"status": "reset", "message": "统计数据已重置"}
+
+# ============ Cross-Domain Knowledge Endpoints ============
+
+@app.get("/knowledge/insight")
+def get_cross_domain_insight():
+    """获取跨领域洞察"""
+    global session
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not started")
+    
+    # 初始化知识连接器的LLM客户端
+    knowledge_connector.llm_client = llm_client
+    insight = knowledge_connector.generate_cross_domain_insight(session.topic)
+    
+    return insight
+
+@app.get("/knowledge/multiple")
+def get_multiple_insights(count: int = 3):
+    """获取多个跨领域洞察"""
+    global session
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not started")
+    
+    knowledge_connector.llm_client = llm_client
+    insights = knowledge_connector.get_multiple_insights(session.topic, count)
+    
+    return {"insights": insights}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

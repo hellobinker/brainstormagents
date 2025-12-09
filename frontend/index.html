@@ -383,19 +383,99 @@
                 </div>
             </div>
 
-            <!-- Right Panel: Visualization -->
-            <div class="w-80 glass-card rounded-xl p-4 flex flex-col">
+            <!-- Right Panel: Visualization & Stats -->
+            <div class="w-80 glass-card rounded-xl p-4 flex flex-col overflow-y-auto">
+                <!-- Online Users -->
+                <div v-if="onlineUsers.length > 0" class="mb-4">
+                    <h2 class="font-semibold mb-2 flex items-center gap-2">
+                        <span>👥</span> 在线用户 ({{ onlineUsers.length }})
+                    </h2>
+                    <div class="flex flex-wrap gap-2">
+                        <span v-for="user in onlineUsers" :key="user.user_id"
+                            class="px-2 py-1 bg-green-500/20 rounded-full text-xs">
+                            🟢 {{ user.name }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Knowledge Graph -->
                 <h2 class="font-semibold mb-2">🔗 知识图谱</h2>
-                <div id="graph" class="flex-1 rounded-lg bg-black/30 overflow-hidden">
+                <div id="graph" class="h-48 rounded-lg bg-black/30 overflow-hidden">
                     <div v-if="!graphData.nodes || graphData.nodes.length === 0"
                         class="h-full flex items-center justify-center text-gray-500 text-sm">
                         等待讨论开始...
                     </div>
                 </div>
 
-                <div class="mt-4 text-sm text-gray-400">
-                    <div>💬 消息: {{ messages.length }}</div>
-                    <div>📊 阶段: {{ completedPhases.length }}/7</div>
+                <!-- Statistics Panel -->
+                <div class="mt-4">
+                    <h2 class="font-semibold mb-2 flex items-center gap-2">
+                        <span>📊</span> 会话统计
+                    </h2>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">消息总数</span>
+                            <span>{{ statistics.overview?.total_messages || messages.length }}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">参与智能体</span>
+                            <span>{{ statistics.overview?.total_agents || agents.length }}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">阶段完成</span>
+                            <span>{{ completedPhases.length }}/7</span>
+                        </div>
+
+                        <!-- Participation Chart -->
+                        <div v-if="Object.keys(statistics.participation || {}).length > 0" class="mt-3">
+                            <div class="text-xs text-gray-400 mb-1">参与度分布</div>
+                            <div v-for="(percent, agent) in statistics.participation" :key="agent" class="mb-1">
+                                <div class="flex justify-between text-xs mb-0.5">
+                                    <span>{{ agent }}</span>
+                                    <span>{{ percent }}%</span>
+                                </div>
+                                <div class="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                    <div class="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
+                                        :style="{width: percent + '%'}"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Top Keywords -->
+                        <div v-if="Object.keys(statistics.top_keywords || {}).length > 0" class="mt-3">
+                            <div class="text-xs text-gray-400 mb-1">热门关键词</div>
+                            <div class="flex flex-wrap gap-1">
+                                <span v-for="(count, kw) in statistics.top_keywords" :key="kw"
+                                    class="px-2 py-0.5 bg-purple-500/20 rounded text-xs">
+                                    {{ kw }} ({{ count }})
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Refresh Stats Button -->
+                    <button @click="fetchStatistics"
+                        class="w-full mt-3 py-1.5 glass-card rounded text-xs hover:bg-white/10">
+                        🔄 刷新统计
+                    </button>
+                </div>
+
+                <!-- @Mention Input -->
+                <div v-if="sessionActive" class="mt-4 border-t border-white/10 pt-4">
+                    <h2 class="font-semibold mb-2 flex items-center gap-2">
+                        <span>💬</span> 参与讨论
+                    </h2>
+                    <div class="text-xs text-gray-400 mb-2">
+                        使用 @智能体名称 可以直接提问
+                    </div>
+                    <input v-model="userName" placeholder="你的昵称"
+                        class="w-full bg-white/10 border border-white/20 rounded px-2 py-1.5 text-sm mb-2">
+                    <textarea v-model="userMessage" placeholder="输入消息... (例如: @产品经理 你怎么看?)" rows="2"
+                        class="w-full bg-white/10 border border-white/20 rounded px-2 py-1.5 text-sm resize-none"></textarea>
+                    <button @click="sendMentionMessage" :disabled="!userMessage.trim()"
+                        class="w-full mt-2 py-2 bg-gradient-to-r from-green-500 to-teal-500 rounded font-medium text-sm hover:opacity-90 disabled:opacity-50">
+                        📤 发送消息
+                    </button>
                 </div>
             </div>
         </div>
@@ -439,6 +519,13 @@
                 const isPaused = ref(false);
                 let graphInstance = null;
                 let eventSource = null;
+
+                // New feature state
+                const statistics = ref({});
+                const onlineUsers = ref([]);
+                const userName = ref("用户");
+                const userMessage = ref("");
+                let websocket = null;
 
                 const phases = ref([
                     { id: "opening", name: "启动会话", emoji: "🎬", defaultRounds: 0 },
@@ -687,7 +774,12 @@
                             eventSource.close();
                             eventSource = null;
                         }
+                        if (websocket) {
+                            websocket.close();
+                            websocket = null;
+                        }
                         await fetch('/session/reset', { method: 'POST' });
+                        await fetch('/statistics/reset', { method: 'POST' });
                         sessionActive.value = false;
                         loading.value = false;
                         messages.value = [];
@@ -697,6 +789,86 @@
                         graphInstance = null;
                         isPaused.value = false;
                         typingAgent.value = null;
+                        statistics.value = {};
+                        onlineUsers.value = [];
+                    }
+                };
+
+                // Fetch statistics from server
+                const fetchStatistics = async () => {
+                    try {
+                        const res = await fetch('/statistics');
+                        if (res.ok) {
+                            statistics.value = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch statistics:', e);
+                    }
+                };
+
+                // Send @mention message
+                const sendMentionMessage = async () => {
+                    if (!userMessage.value.trim()) return;
+
+                    const msgContent = userMessage.value;
+                    const senderName = userName.value || '用户';
+
+                    // Clear input immediately for better UX
+                    userMessage.value = '';
+
+                    // Add user message to chat immediately
+                    messages.value.push({
+                        type: 'human',
+                        sender: `👤 ${senderName}`,
+                        content: msgContent
+                    });
+                    scrollToBottom();
+
+                    try {
+                        const res = await fetch('/session/mention', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                sender: senderName,
+                                content: msgContent
+                            })
+                        });
+
+                        if (res.ok) {
+                            const data = await res.json();
+
+                            // Add agent responses if any
+                            if (data.responses && data.responses.length > 0) {
+                                for (const resp of data.responses) {
+                                    messages.value.push({
+                                        type: 'agent',
+                                        sender: resp.agent,
+                                        content: resp.response,
+                                        role: '回复@提及'
+                                    });
+                                }
+                                scrollToBottom();
+                            }
+
+                            fetchStatistics();
+                        } else {
+                            console.error('Failed to send message:', res.status);
+                        }
+                    } catch (e) {
+                        console.error('Failed to send mention:', e);
+                    }
+                };
+
+                // Fetch online users
+                const fetchOnlineUsers = async () => {
+                    try {
+                        const res = await fetch('/ws/users');
+                        if (res.ok) {
+                            const data = await res.json();
+                            onlineUsers.value = data.users || [];
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch users:', e);
                     }
                 };
 
@@ -832,9 +1004,11 @@
                     currentPhase, phaseName, phaseEmoji, completedPhases,
                     activeAgents, graphData, showPresetModal, phases,
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
+                    statistics, onlineUsers, userName, userMessage,
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
-                    renderMarkdown, exportSummaryMD, exportGraphMermaid
+                    renderMarkdown, exportSummaryMD, exportGraphMermaid,
+                    fetchStatistics, sendMentionMessage, fetchOnlineUsers
                 };
             }
         }).mount('#app');
