@@ -208,7 +208,7 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                     yield create_sse_message("paused", {"status": "paused"})
                     await asyncio.sleep(1)
                 
-                # Generate response
+                # Start typing indicator
                 yield create_sse_message("agent_typing", {
                     "agent": agent.name,
                     "role": agent.role
@@ -216,16 +216,32 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                 
                 await asyncio.sleep(0.1)
                 
-                response = llm_client.get_completion(
+                # Stream the response token by token
+                full_response = ""
+                for chunk in llm_client.get_completion_stream(
                     system_prompt=agent.get_system_prompt(),
                     user_prompt=full_prompt,
                     model=agent.model_name
-                )
+                ):
+                    full_response += chunk
+                    
+                    # Send each chunk to frontend
+                    yield create_sse_message("message_chunk", {
+                        "sender": agent.name,
+                        "chunk": chunk,
+                        "type": "agent",
+                        "role": agent.role,
+                        "emotion": agent.current_emotion,
+                        "model": agent.model_name,
+                        "phase": facilitator.current_phase.value
+                    })
+                    
+                    await asyncio.sleep(0.05)  # Increased delay to ensure visible streaming effect
                 
-                # Stream the response
-                yield create_sse_message("message", {
+                # Send completion signal
+                yield create_sse_message("message_complete", {
                     "sender": agent.name,
-                    "content": response,
+                    "content": full_response,
                     "type": "agent",
                     "role": agent.role,
                     "emotion": agent.current_emotion,
@@ -233,7 +249,7 @@ async def generate_phase_stream(topic: str, agents: List[Agent]) -> AsyncGenerat
                     "phase": facilitator.current_phase.value
                 })
                 
-                session.add_message(Message(agent.name, response, {
+                session.add_message(Message(agent.name, full_response, {
                     "phase": facilitator.current_phase.value,
                     "role": agent.role,
                     "round": session.rounds

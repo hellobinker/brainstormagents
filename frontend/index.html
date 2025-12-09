@@ -97,6 +97,26 @@
             }
         }
 
+        /* Streaming cursor for messages being generated */
+        .streaming-cursor::after {
+            content: '▊';
+            animation: blink 0.8s infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+
+            0%,
+            50% {
+                opacity: 1;
+            }
+
+            51%,
+            100% {
+                opacity: 0;
+            }
+        }
+
         /* Markdown Styles */
         .markdown-content h1 {
             font-size: 1.5rem;
@@ -351,8 +371,10 @@
                                 <span class="font-bold">{{ msg.sender }}</span>
                                 <span class="text-xs bg-blue-500/30 px-2 py-0.5 rounded-full">{{ msg.role }}</span>
                                 <span class="text-xs text-gray-400 ml-auto">{{ msg.model }}</span>
+                                <span v-if="msg.streaming" class="text-xs text-yellow-400 ml-2">⚡ 生成中...</span>
                             </div>
-                            <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                            <div class="markdown-content" :class="{'streaming-cursor': msg.streaming}"
+                                v-html="renderMarkdown(msg.content)"></div>
                         </div>
 
                         <!-- Summary -->
@@ -665,6 +687,45 @@
                                 emoji: data.emoji
                             });
                             scrollToBottom();
+                        });
+
+                        // Handle streaming message chunks
+                        let streamingMessage = null;
+
+                        eventSource.addEventListener('message_chunk', (e) => {
+                            const data = JSON.parse(e.data);
+
+                            // If this is a new streaming message, create it
+                            if (!streamingMessage || streamingMessage.sender !== data.sender) {
+                                const phaseInfo = phases.value.find(p => p.id === data.phase);
+                                streamingMessage = {
+                                    sender: data.sender,
+                                    content: '',
+                                    type: data.type,
+                                    role: data.role,
+                                    emotion: data.emotion,
+                                    model: data.model,
+                                    phase_name: phaseInfo ? phaseInfo.name : '',
+                                    streaming: true
+                                };
+                                messages.value.push(streamingMessage);
+                            }
+
+                            // Append the chunk to the streaming message
+                            streamingMessage.content += data.chunk;
+                            scrollToBottom();
+                        });
+
+                        eventSource.addEventListener('message_complete', (e) => {
+                            const data = JSON.parse(e.data);
+
+                            // Mark streaming as complete
+                            if (streamingMessage && streamingMessage.sender === data.sender) {
+                                streamingMessage.streaming = false;
+                                streamingMessage = null;
+                            }
+
+                            typingAgent.value = null;
                         });
 
                         eventSource.addEventListener('message', (e) => {
