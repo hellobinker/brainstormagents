@@ -93,7 +93,7 @@ class CrossDomainConnector:
                 insight = self.llm_client.get_completion(
                     system_prompt="你是跨界创新专家，擅长将不同领域的知识进行连接和迁移。",
                     user_prompt=prompt,
-                    model="gpt-5.1"
+                    model="gemini-3-pro-preview"
                 )
             except Exception:
                 insight = f"由于未连接LLM，无法生成深度洞察。请思考如何将{seed['domain']}中的{seed['concept']}应用到{topic}中。"
@@ -127,7 +127,7 @@ class CrossDomainConnector:
                 return self.llm_client.get_completion(
                     system_prompt="你是联想思维专家。",
                     user_prompt=prompt,
-                    model="gpt-5.1"
+                    model="gemini-3-pro-preview"
                 )
             except Exception:
                 return f"尝试将{seed['concept']}应用到{topic}中..."

@@ -77,7 +77,7 @@ class AgentConfig(BaseModel):
     expertise: str
     style: str
     personality_traits: List[str]
-    model_name: str = "gpt-5.1"
+    model_name: str = "gemini-3-pro-preview"
 
 class StartSessionRequest(BaseModel):
     session_id: str = "default"  # Add session_id
@@ -133,9 +133,10 @@ def start_session(request: StartSessionRequest):
     # Initialize session in state
     state.initialize_session(request.topic, agent_instances, request.phase_rounds)
     
-    # Facilitator model (keep original default or what was passed)
-    if state.facilitator:
-        state.facilitator.model_name = "grok-4.1-fast"
+    # Initialize facilitator
+    if not state.facilitator:
+        state.facilitator = Facilitator(state.llm_client)
+        state.facilitator.model_name = "gemini-3-pro-preview"
         
     return {
         "status": "started",
@@ -171,7 +172,7 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
     intro = state.llm_client.get_completion(
         system_prompt=state.facilitator.get_system_prompt(),
         user_prompt=f"Please introduce the '{phase_name}' phase for the topic: {topic}. Be brief and encouraging.",
-        model="gpt-5.1"
+        model="gemini-3-pro-preview"
     )
     
     yield create_sse_message("message", {

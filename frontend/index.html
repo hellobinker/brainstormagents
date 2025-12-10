@@ -256,6 +256,10 @@
                     class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
                     多智能体头脑风暴系统
                 </h1>
+                <button @click="createNewSession"
+                    class="ml-4 px-3 py-1 bg-white/10 hover:bg-white/20 rounded-full text-xs transition border border-white/20 flex items-center gap-1">
+                    <span>➕</span> 新建会话
+                </button>
             </div>
             <div class="flex items-center gap-4">
                 <div v-if="currentPhase" class="phase-badge px-3 py-1 rounded-full text-sm font-medium">
@@ -668,7 +672,7 @@
                 const reportContent = ref("");
 
                 // Available API Models
-                const availableModels = ref(["grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4"]);
+                const availableModels = ref(["gemini-3-pro-preview", "grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4"]);
 
                 const phases = ref([
                     { id: "opening", name: "启动会话", emoji: "🎬", defaultRounds: 0 },
@@ -744,14 +748,14 @@
                 ];
 
                 const agents = ref([
-                    { ...expertPresets[0], model_name: "grok-4.1-fast" },
-                    { ...expertPresets[5], model_name: "gpt-5-mini" },
-                    { ...expertPresets[30], model_name: "gemini-2.5-flash" }
+                    { ...expertPresets[0], model_name: "gemini-3-pro-preview" },
+                    { ...expertPresets[5], model_name: "gemini-3-pro-preview" },
+                    { ...expertPresets[30], model_name: "gemini-3-pro-preview" }
                 ]);
 
                 const addPresetAgent = (preset) => {
-                    // Default to grok-4.1-fast when adding new agents
-                    agents.value.push({ ...preset, model_name: "grok-4.1-fast" });
+                    // Default to gemini-3-pro-preview when adding new agents
+                    agents.value.push({ ...preset, model_name: "gemini-3-pro-preview" });
                     showPresetModal.value = false;
                 };
 
@@ -998,9 +1002,19 @@
                         await fetch('/session/resume', { method: 'POST' });
                         isPaused.value = false;
                     } else {
-                        await fetch('/session/pause', { method: 'POST' });
-                        isPaused.value = true;
+                        if (confirm('确定要暂停当前会话吗？')) {
+                            await fetch('/session/pause', { method: 'POST' });
+                            isPaused.value = true;
+                        }
                     }
+                };
+
+                // Create new independent session in new tab
+                const createNewSession = () => {
+                    // Generate random 8-char string
+                    const newId = Math.random().toString(36).substring(2, 10);
+                    // Open in new tab with room param
+                    window.open(`/?room=${newId}`, '_blank');
                 };
 
                 const resetSession = async () => {
@@ -1312,7 +1326,7 @@
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
                     renderMarkdown, exportSummaryMD, exportGraphMermaid, exportGraphImage, exportFullChat,
-                    fetchStatistics, sendMentionMessage, fetchOnlineUsers,
+                    fetchStatistics, sendMentionMessage, fetchOnlineUsers, createNewSession,
                     printReport, downloadMarkdown
                 };
             }

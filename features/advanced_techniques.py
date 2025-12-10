@@ -41,7 +41,7 @@ class CreativityTechniques:
         return self.llm_client.get_completion(
             system_prompt="你是创新思维专家，擅长运用SCAMPER方法激发创意。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def apply_random_stimulus(self, topic: str, context: str, agent_role: str) -> str:
@@ -65,7 +65,7 @@ class CreativityTechniques:
         return self.llm_client.get_completion(
             system_prompt="你是创意联想专家，擅长从看似无关的事物中发现创新灵感。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def apply_six_hats(self, topic: str, context: str, agent_role: str) -> str:
@@ -93,7 +93,7 @@ class CreativityTechniques:
         return self.llm_client.get_completion(
             system_prompt=f"你正在运用六顶思考帽方法，现在戴着{hat_name}，专注于{focus}。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def apply_reverse_thinking(self, topic: str, context: str, agent_role: str) -> str:
@@ -114,7 +114,7 @@ class CreativityTechniques:
         return self.llm_client.get_completion(
             system_prompt="你是逆向思维专家，擅长从问题的反面找到创新突破口。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def stimulate_creativity(self, topic: str, context: str, agent_role: str, technique: str = None) -> Dict[str, str]:
@@ -168,7 +168,7 @@ class IdeaEvolution:
         return self.llm_client.get_completion(
             system_prompt="你是创意进化专家，擅长通过变异优化想法。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def crossover_ideas(self, idea1: str, idea2: str, topic: str) -> str:
@@ -184,7 +184,7 @@ class IdeaEvolution:
         return self.llm_client.get_completion(
             system_prompt="你是创意融合专家，擅长将不同想法交叉产生创新。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
     
     def evaluate_fitness(self, idea: str, topic: str) -> Dict[str, Any]:
@@ -205,7 +205,7 @@ class IdeaEvolution:
         result = self.llm_client.get_completion(
             system_prompt="你是创新评估专家，客观评价想法质量。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
         
         # 简单解析，返回原始文本
@@ -306,7 +306,7 @@ class ParallelDivergence:
         return self.llm_client.get_completion(
             system_prompt="你是创意整理专家，擅长从大量想法中提炼精华。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )
 
 
@@ -456,5 +456,5 @@ class DebateMode:
         return self.llm_client.get_completion(
             system_prompt="你是公正的辩论裁判，需要客观综合双方观点得出结论。",
             user_prompt=prompt,
-            model="gpt-5.1"
+            model="gemini-3-pro-preview"
         )

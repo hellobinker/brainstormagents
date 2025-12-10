@@ -16,9 +16,9 @@ def main():
     # User provided configuration
     api_key = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
     base_url = "https://yunwu.ai/v1"
-    # Available models: grok-4.1-fast, gpt-5.1, claude-sonnet-4-5-20250929, gemini-3-pro-preview
-    # Using gpt-5.1 as default for high quality
-    default_model = "gpt-5.1" 
+    # Available models: grok-4.1-fast, gemini-3-pro-preview
+    # Using gemini-3-pro-preview as default for high quality
+    default_model = "gemini-3-pro-preview" 
     
     llm_client = LLMClient(api_key=api_key, base_url=base_url)
     role_switcher = DynamicRoleSwitcher()

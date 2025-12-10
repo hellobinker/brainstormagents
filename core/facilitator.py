@@ -130,7 +130,7 @@ PHASE_CONFIG = {
 class Facilitator:
     """协作主持人"""
     
-    def __init__(self, llm_client, model_name: str = "grok-4.1-fast", custom_rounds: Dict[str, int] = None):
+    def __init__(self, llm_client, model_name: str = "gemini-3-pro-preview", custom_rounds: Dict[str, int] = None):
         self.llm_client = llm_client
         self.model_name = model_name
         self.current_phase = BrainstormPhase.OPENING

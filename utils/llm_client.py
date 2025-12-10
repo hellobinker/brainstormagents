@@ -3,7 +3,7 @@ from openai import OpenAI
 from typing import Iterator
 
 class LLMClient:
-    def __init__(self, api_key: str = None, base_url: str = None, timeout: float = 60.0):
+    def __init__(self, api_key: str = None, base_url: str = None, timeout: float = 90.0):
         # Use a dummy key if none provided, to allow instantiation for mock mode
         key = api_key or os.environ.get("OPENAI_API_KEY") or "sk-mock-key-for-testing"
         base = base_url or os.environ.get("OPENAI_BASE_URL")
@@ -13,7 +13,7 @@ class LLMClient:
             print(f"Error init client: {e}")
             self.client = OpenAI(api_key="mock", base_url="base", timeout=timeout)
 
-    def get_completion(self, system_prompt: str, user_prompt: str, model: str = "gpt-3.5-turbo", timeout: float = None) -> str:
+    def get_completion(self, system_prompt: str, user_prompt: str, model: str = "gpt-5-chat", timeout: float = None) -> str:
         """Get non-streaming completion"""
         # Check if we are using the mock key
         if self.client.api_key == "sk-mock-key-for-testing" or self.client.api_key == "mock":
@@ -33,29 +33,38 @@ class LLMClient:
 """
             return f"[Mock Response] Interesting point about {user_prompt[:20]}... I think we should explore this further."
 
-        try:
-            # Create a temp client with custom timeout if specified, or use default with increased timeout
-            # Note: OpenAI client instances are cheap to create if needed, but here we can just pass timeout to the request if supported?
-            # Actually openai-python v1 passes timeout in the constructor. We can override it per request in .create()?
-            # Yes, .create(..., timeout=...) is supported in newer versions, checking docs logic.
-            # Assuming standard openai lib behavior:
-            extra_args = {}
-            if timeout:
-                extra_args['timeout'] = timeout
+        # Define fallback chain
+        fallback_models = ["gpt-5-chat", "grok-4.1-fast"]
+        # If the requested model is already in fallback list, remove it to avoid dupes, but keep others
+        candidate_models = [model] + [m for m in fallback_models if m != model]
+        
+        last_error = None
+        
+        for attempt_model in candidate_models:
+            try:
+                # Create a temp client with custom timeout if specified
+                extra_args = {}
+                if timeout:
+                    extra_args['timeout'] = timeout
 
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                **extra_args
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"Error calling LLM: {e}")
-            return f"[Mock Response due to error] I agree with the previous point and suggest we consider the implications of {user_prompt[:10]}."
+                response = self.client.chat.completions.create(
+                    model=attempt_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                    **extra_args
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"[WARN] Failed to call model {attempt_model}: {e}. Retrying with next fallback...")
+                last_error = e
+                continue
+                
+        # If we get here, all models failed
+        print(f"[ERROR] All models failed. Last error: {last_error}")
+        return f"[System Error] Unable to generate response after trying multiple models ({', '.join(candidate_models)}). Please check API connectivity."
     
     def get_completion_stream(self, system_prompt: str, user_prompt: str, model: str = "gpt-3.5-turbo") -> Iterator[str]:
         """Get streaming completion - yields content chunks"""
@@ -68,24 +77,36 @@ class LLMClient:
                 yield word + " "
             return
 
-        try:
-            stream = self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                stream=True
-            )
-            
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-                    
-        except Exception as e:
-            print(f"Error calling LLM stream: {e}")
-            yield f"[Mock Response due to error] I agree with the previous point and suggest we consider the implications of {user_prompt[:10]}."
+        # Define fallback chain
+        fallback_models = ["gpt-5-chat", "grok-4.1-fast"]
+        candidate_models = [model] + [m for m in fallback_models if m != model]
+        
+        for attempt_model in candidate_models:
+            try:
+                stream = self.client.chat.completions.create(
+                    model=attempt_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                    stream=True
+                )
+                
+                # Yield from the successful stream
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                
+                # If we successfully iterated without error (though stream errors might raise during iteration), return
+                return 
+                
+            except Exception as e:
+                print(f"[WARN] Failed to call streaming model {attempt_model}: {e}. Retrying with next fallback...")
+                continue
+                
+        # If we get here, all models failed
+        yield f"[System Error] Unable to stream response. All fallback models ({', '.join(candidate_models)}) failed."
 
     def list_models(self) -> list[str]:
         """List available models from the API"""
