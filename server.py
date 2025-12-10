@@ -15,6 +15,10 @@ from core.session_manager import session_manager, SessionState
 from features.websocket_manager import ws_manager  # Use global singleton
 from features.statistics import SessionStatistics
 from features.mention_parser import MentionParser
+from config import (
+    API_KEY, API_BASE_URL, DEFAULT_MODEL, AVAILABLE_MODELS,
+    DEFAULT_SESSION_ID
+)
 import uvicorn
 import os
 import json
@@ -53,19 +57,15 @@ def create_session():
     return {"session_id": session_id}
 
 @app.get("/models")
-async def get_available_models():
-    """Fetch available models from the API"""
-    # Use default credentials
-    DEFAULT_API_KEY = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
-    DEFAULT_BASE_URL = "https://yunwu.ai/v1"
-    
-    # Init temp client
-    client = LLMClient(api_key=DEFAULT_API_KEY, base_url=DEFAULT_BASE_URL)
+def list_models():
+    """List available models from API"""
+    # Init temp client using config
+    client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
     models = client.list_models()
     
-    # Fallback if list is empty
+    # Fallback if list is empty - use config
     if not models:
-        models = ["grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4", "gpt-5.1"]
+        models = AVAILABLE_MODELS
         
     return {"models": models}
 
@@ -77,10 +77,10 @@ class AgentConfig(BaseModel):
     expertise: str
     style: str
     personality_traits: List[str]
-    model_name: str = "gemini-3-pro-preview"
+    model_name: str = None  # Will use config.DEFAULT_MODEL via Agent class
 
 class StartSessionRequest(BaseModel):
-    session_id: str = "default"  # Add session_id
+    session_id: str = DEFAULT_SESSION_ID
     topic: str
     agents: List[AgentConfig]
     api_key: Optional[str] = None
@@ -136,7 +136,7 @@ def start_session(request: StartSessionRequest):
     # Initialize facilitator
     if not state.facilitator:
         state.facilitator = Facilitator(state.llm_client)
-        state.facilitator.model_name = "gemini-3-pro-preview"
+        # model_name is now set from config.DEFAULT_MODEL in Facilitator.__init__
         
     return {
         "status": "started",
@@ -172,7 +172,7 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
     intro = state.llm_client.get_completion(
         system_prompt=state.facilitator.get_system_prompt(),
         user_prompt=f"Please introduce the '{phase_name}' phase for the topic: {topic}. Be brief and encouraging.",
-        model="gemini-3-pro-preview"
+        model=state.facilitator.model_name  # Use facilitator's configured model
     )
     
     yield create_sse_message("message", {

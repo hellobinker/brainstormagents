@@ -4,6 +4,7 @@ Facilitator Agent - 协作主持人
 """
 from typing import List, Dict
 from enum import Enum
+from config import DEFAULT_MODEL, EXTENDED_TIMEOUT
 
 class BrainstormPhase(Enum):
     OPENING = "opening"           # 启动会话
@@ -130,9 +131,9 @@ PHASE_CONFIG = {
 class Facilitator:
     """协作主持人"""
     
-    def __init__(self, llm_client, model_name: str = "gemini-3-pro-preview", custom_rounds: Dict[str, int] = None):
+    def __init__(self, llm_client, model_name: str = None, custom_rounds: Dict[str, int] = None):
         self.llm_client = llm_client
-        self.model_name = model_name
+        self.model_name = model_name or DEFAULT_MODEL
         self.current_phase = BrainstormPhase.OPENING
         # Allow custom rounds per phase
         self.custom_rounds = custom_rounds or {}
@@ -160,7 +161,7 @@ class Facilitator:
             system_prompt=self.get_system_prompt(),
             user_prompt=user_prompt,
             model=self.model_name,
-            timeout=120.0
+            timeout=EXTENDED_TIMEOUT
         )
         return response
     
@@ -235,5 +236,5 @@ class Facilitator:
             system_prompt="你是世界顶级的战略咨询顾问和方案架构师，擅长将发散的头脑风暴内容整理成逻辑严密、可落地的专业报告。",
             user_prompt=prompt,
             model=self.model_name,
-            timeout=120.0
+            timeout=EXTENDED_TIMEOUT
         )

@@ -8,19 +8,13 @@ from features.emotion_engine import EmotionalIntelligenceEngine
 from features.knowledge import CrossDomainConnector
 from features.visualization import RealTimeVisualizer
 from features.collaboration import HumanAICollaboration
+from config import API_KEY, API_BASE_URL, DEFAULT_MODEL
 
 def main():
     print("Initializing Multi-Agent Brainstorming System...")
     
-    # Initialize components
-    # User provided configuration
-    api_key = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
-    base_url = "https://yunwu.ai/v1"
-    # Available models: grok-4.1-fast, gemini-3-pro-preview
-    # Using gemini-3-pro-preview as default for high quality
-    default_model = "gemini-3-pro-preview" 
-    
-    llm_client = LLMClient(api_key=api_key, base_url=base_url)
+    # Initialize components using centralized config
+    llm_client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
     role_switcher = DynamicRoleSwitcher()
     emotion_engine = EmotionalIntelligenceEngine()
     knowledge_connector = CrossDomainConnector()

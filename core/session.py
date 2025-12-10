@@ -2,6 +2,7 @@ from typing import List, Dict
 from core.agent import Agent
 from core.protocol import Message
 from utils.llm_client import LLMClient
+from config import SUMMARY_MODEL
 
 class BrainstormingSession:
     def __init__(self, topic: str, agents: List[Agent], llm_client: LLMClient):
@@ -82,7 +83,7 @@ class BrainstormingSession:
         self.summary = self.llm_client.get_completion(
             system_prompt=system_prompt,
             user_prompt=summary_prompt,
-            model="gemini-3-pro-preview"  # Use a powerful model for summary
+            model=SUMMARY_MODEL  # Use config for summary model
         )
         
         return self.summary

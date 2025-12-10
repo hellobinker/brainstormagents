@@ -1,14 +1,15 @@
 from typing import List, Dict, Any
 from core.protocol import Message
+from config import DEFAULT_MODEL
 
 class Agent:
-    def __init__(self, name: str, role: str, expertise: str, style: str, personality_traits: List[str], model_name: str = "gemini-3-pro-preview"):
+    def __init__(self, name: str, role: str, expertise: str, style: str, personality_traits: List[str], model_name: str = None):
         self.name = name
         self.role = role
         self.expertise = expertise
         self.style = style
         self.personality_traits = personality_traits
-        self.model_name = model_name
+        self.model_name = model_name or DEFAULT_MODEL
         self.history: List[Message] = []
         self.current_emotion: str = "neutral"
         

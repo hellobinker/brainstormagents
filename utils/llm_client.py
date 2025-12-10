@@ -1,20 +1,24 @@
 import os
 from openai import OpenAI
 from typing import Iterator
+from config import DEFAULT_MODEL, FALLBACK_MODELS, DEFAULT_TIMEOUT
 
 class LLMClient:
-    def __init__(self, api_key: str = None, base_url: str = None, timeout: float = 90.0):
+    def __init__(self, api_key: str = None, base_url: str = None, timeout: float = None):
         # Use a dummy key if none provided, to allow instantiation for mock mode
         key = api_key or os.environ.get("OPENAI_API_KEY") or "sk-mock-key-for-testing"
         base = base_url or os.environ.get("OPENAI_BASE_URL")
+        actual_timeout = timeout or DEFAULT_TIMEOUT
         try:
-            self.client = OpenAI(api_key=key, base_url=base, timeout=timeout)
+            self.client = OpenAI(api_key=key, base_url=base, timeout=actual_timeout)
         except Exception as e:
             print(f"Error init client: {e}")
-            self.client = OpenAI(api_key="mock", base_url="base", timeout=timeout)
+            self.client = OpenAI(api_key="mock", base_url="base", timeout=actual_timeout)
 
-    def get_completion(self, system_prompt: str, user_prompt: str, model: str = "gpt-5-chat", timeout: float = None) -> str:
+    def get_completion(self, system_prompt: str, user_prompt: str, model: str = None, timeout: float = None) -> str:
         """Get non-streaming completion"""
+        model = model or DEFAULT_MODEL
+        
         # Check if we are using the mock key
         if self.client.api_key == "sk-mock-key-for-testing" or self.client.api_key == "mock":
             print("[WARN] No API Key found. Using Mock Response.")
@@ -33,10 +37,8 @@ class LLMClient:
 """
             return f"[Mock Response] Interesting point about {user_prompt[:20]}... I think we should explore this further."
 
-        # Define fallback chain
-        fallback_models = ["gpt-5-chat", "grok-4.1-fast"]
-        # If the requested model is already in fallback list, remove it to avoid dupes, but keep others
-        candidate_models = [model] + [m for m in fallback_models if m != model]
+        # Define fallback chain using config
+        candidate_models = [model] + [m for m in FALLBACK_MODELS if m != model]
         
         last_error = None
         
@@ -66,8 +68,10 @@ class LLMClient:
         print(f"[ERROR] All models failed. Last error: {last_error}")
         return f"[System Error] Unable to generate response after trying multiple models ({', '.join(candidate_models)}). Please check API connectivity."
     
-    def get_completion_stream(self, system_prompt: str, user_prompt: str, model: str = "gpt-3.5-turbo") -> Iterator[str]:
+    def get_completion_stream(self, system_prompt: str, user_prompt: str, model: str = None) -> Iterator[str]:
         """Get streaming completion - yields content chunks"""
+        model = model or DEFAULT_MODEL
+        
         # Check if we are using the mock key
         if self.client.api_key == "sk-mock-key-for-testing":
             print("[WARN] No API Key found. Using Mock Streaming Response.")
@@ -77,9 +81,8 @@ class LLMClient:
                 yield word + " "
             return
 
-        # Define fallback chain
-        fallback_models = ["gpt-5-chat", "grok-4.1-fast"]
-        candidate_models = [model] + [m for m in fallback_models if m != model]
+        # Define fallback chain using config
+        candidate_models = [model] + [m for m in FALLBACK_MODELS if m != model]
         
         for attempt_model in candidate_models:
             try:
