@@ -9,8 +9,12 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/force-graph"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -76,6 +80,21 @@
 
         .agent-msg {
             background: rgba(255, 255, 255, 0.1);
+            min-height: auto;
+            height: auto;
+        }
+
+        .facilitator-msg {
+            min-height: auto;
+            height: auto;
+        }
+
+        .agent-msg .markdown-content,
+        .facilitator-msg .markdown-content,
+        .human-msg .markdown-content {
+            min-height: auto;
+            height: auto;
+            max-height: none;
         }
 
         .summary-section {
@@ -141,6 +160,14 @@
         .markdown-content p {
             margin: 0.4rem 0;
             line-height: 1.6;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .markdown-content {
+            max-width: 100%;
+            overflow-wrap: break-word;
         }
 
         .markdown-content ul,
@@ -243,6 +270,92 @@
             border-radius: 8px;
             margin: 0.5rem 0;
         }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            body {
+                font-size: 14px;
+            }
+
+            .glass-card {
+                border-radius: 12px;
+            }
+
+            /* Stack layout vertically on mobile */
+            #app>div {
+                flex-direction: column !important;
+            }
+
+            /* Full width panels on mobile */
+            .w-80,
+            .w-96 {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+
+            /* Adjust chat area for mobile */
+            .flex-1 {
+                min-height: 60vh;
+            }
+
+            /* Hide graph on very small screens, show as collapsible */
+            @media (max-width: 640px) {
+                .graph-container {
+                    max-height: 300px;
+                }
+            }
+        }
+
+        /* Smooth scroll for chat */
+        .chat-messages {
+            scroll-behavior: smooth;
+        }
+
+        /* Code block styling for highlight.js */
+        .markdown-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.8rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+            max-width: 100%;
+        }
+
+        .markdown-content pre code {
+            display: block;
+            padding: 0;
+            overflow-x: auto;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            white-space: pre;
+            word-wrap: normal;
+        }
+
+        /* Ensure tables don't overflow */
+        .markdown-content table {
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+            width: 100%;
+            display: block;
+            overflow-x: auto;
+        }
+
+        /* Typing animation enhancement */
+        @keyframes typewriter {
+            from {
+                width: 0;
+            }
+
+            to {
+                width: 100%;
+            }
+        }
+
+        .typewriter-text {
+            overflow: hidden;
+            white-space: nowrap;
+        }
     </style>
 </head>
 
@@ -272,73 +385,124 @@
         </header>
 
         <!-- Main Content -->
-        <div class="flex-1 flex overflow-hidden p-4 gap-4">
+        <div class="flex-1 flex flex-col md:flex-row overflow-hidden p-2 md:p-4 gap-2 md:gap-4">
             <!-- Left Panel: Config & Agents -->
-            <div class="w-80 glass-card rounded-xl p-4 overflow-y-auto shrink-0">
+            <div
+                class="w-full md:w-80 glass-card rounded-xl p-3 md:p-4 overflow-y-auto shrink-0 max-h-[50vh] md:max-h-none">
                 <div v-if="!sessionActive">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <span>⚙️</span> 会话配置
-                    </h2>
-
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-300 mb-1">讨论主题</label>
-                        <textarea v-model="topic" rows="2"
-                            class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
-                            placeholder="输入讨论主题..."></textarea>
+                    <!-- Tabs -->
+                    <div class="flex gap-2 mb-4 bg-white/5 p-1 rounded-lg">
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'config' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'config'">
+                            <span>⚙️</span> 配置
+                        </button>
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'history' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'history'; fetchSessions()">
+                            <span>📜</span> 历史记录
+                        </button>
                     </div>
 
-                    <h3 class="text-md font-medium mb-2 flex items-center gap-2">
-                        <span>👥</span> 参与专家 ({{ agents.length }})
-                    </h3>
+                    <!-- Config Tab -->
+                    <div v-show="currentTab === 'config'">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <span>⚙️</span> 会话配置
+                        </h2>
 
-                    <div class="space-y-2 max-h-60 overflow-y-auto mb-4">
-                        <div v-for="(agent, index) in agents" :key="index" class="glass-card rounded-lg p-2 text-sm">
-                            <div class="flex justify-between items-center">
-                                <span class="font-medium">{{ agent.name }}</span>
-                                <button @click="removeAgent(index)" class="text-red-400 hover:text-red-300">✕</button>
-                            </div>
-                            <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
-                            <select v-model="agent.model_name"
-                                class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
-                                <option v-for="model in availableModels" :key="model" :value="model">
-                                    {{ model }}
-                                </option>
-                            </select>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">讨论主题</label>
+                            <textarea v-model="topic" rows="2"
+                                class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
+                                placeholder="输入讨论主题..."></textarea>
                         </div>
-                    </div>
 
-                    <button @click="showPresetModal = true"
-                        class="w-full py-2 glass-card rounded-lg hover:bg-white/10 mb-4 text-sm">
-                        ➕ 添加专家
-                    </button>
-
-                    <!-- Phase Rounds Configuration -->
-                    <div class="mb-4">
                         <h3 class="text-md font-medium mb-2 flex items-center gap-2">
-                            <span>🔄</span> 阶段轮数配置
+                            <span>👥</span> 参与专家 ({{ agents.length }})
                         </h3>
-                        <div class="space-y-2 text-sm">
-                            <template v-for="phase in phases" :key="phase.id">
-                                <div v-if="phase.defaultRounds > 0"
-                                    class="flex items-center justify-between p-2 glass-card rounded">
-                                    <span>{{ phase.emoji }} {{ phase.name }}</span>
-                                    <div class="flex items-center gap-2">
-                                        <button @click="decreaseRounds(phase.id)"
-                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">-</button>
-                                        <span class="w-6 text-center">{{ phaseRounds[phase.id] || phase.defaultRounds
-                                            }}</span>
-                                        <button @click="increaseRounds(phase.id)"
-                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">+</button>
-                                    </div>
+
+                        <div class="space-y-2 max-h-60 overflow-y-auto mb-4">
+                            <div v-for="(agent, index) in agents" :key="index"
+                                class="glass-card rounded-lg p-2 text-sm">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-medium">{{ agent.name }}</span>
+                                    <button @click="removeAgent(index)"
+                                        class="text-red-400 hover:text-red-300">✕</button>
                                 </div>
-                            </template>
+                                <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
+                                <select v-model="agent.model_name"
+                                    class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
+                                    <option v-for="model in availableModels" :key="model" :value="model">
+                                        {{ model }}
+                                    </option>
+                                </select>
+                            </div>
                         </div>
+
+                        <button @click="showPresetModal = true"
+                            class="w-full py-2 glass-card rounded-lg hover:bg-white/10 mb-4 text-sm">
+                            ➕ 添加专家
+                        </button>
+
+                        <!-- Phase Rounds Configuration -->
+                        <div class="mb-4">
+                            <h3 class="text-md font-medium mb-2 flex items-center gap-2">
+                                <span>🔄</span> 阶段轮数配置
+                            </h3>
+                            <div class="space-y-2 text-sm">
+                                <template v-for="phase in phases" :key="phase.id">
+                                    <div v-if="phase.defaultRounds > 0"
+                                        class="flex items-center justify-between p-2 glass-card rounded">
+                                        <span>{{ phase.emoji }} {{ phase.name }}</span>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="decreaseRounds(phase.id)"
+                                                class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">-</button>
+                                            <span class="w-6 text-center">{{ phaseRounds[phase.id] ||
+                                                phase.defaultRounds
+                                                }}</span>
+                                            <button @click="increaseRounds(phase.id)"
+                                                class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">+</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <button @click="startFullSession" :disabled="loading || agents.length === 0"
+                            class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
+                            🚀 启动头脑风暴
+                        </button>
                     </div>
 
-                    <button @click="startFullSession" :disabled="loading || agents.length === 0"
-                        class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
-                        🚀 启动头脑风暴
-                    </button>
+                    <!-- History Tab -->
+                    <div v-show="currentTab === 'history'">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-lg font-semibold flex items-center gap-2">
+                                <span>📜</span> 历史会话
+                            </h2>
+                            <button @click="fetchSessions"
+                                class="text-xs bg-white/10 px-2 py-1 rounded hover:bg-white/20">🔄 刷新</button>
+                        </div>
+
+                        <div v-if="pastSessions.length === 0" class="text-center text-gray-500 py-10">
+                            暂无历史记录
+                        </div>
+
+                        <div class="space-y-3 max-h-[70vh] overflow-y-auto">
+                            <div v-for="session in pastSessions" :key="session.id"
+                                @click="loadSessionHistory(session.id)"
+                                class="glass-card p-3 rounded-lg cursor-pointer hover:bg-white/10 transition active:scale-95 group">
+                                <div class="font-medium mb-1 line-clamp-2 group-hover:text-blue-300 transition-colors">
+                                    {{ session.topic }}</div>
+                                <div class="flex justify-between text-xs text-gray-400">
+                                    <span>🧠 {{ session.agent_count }} 专家</span>
+                                    <span>{{ new Date(session.created_at).toLocaleString() }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div v-else>
@@ -390,6 +554,10 @@
                                 class="w-full py-2 bg-purple-500/80 hover:bg-purple-500 disabled:opacity-40 rounded-lg font-medium transition">
                                 🔮 导出图谱(Mermaid)
                             </button>
+                            <button @click="exportMindMap" :disabled="graphData.nodes.length === 0"
+                                class="w-full mt-2 py-2 bg-indigo-500/80 hover:bg-indigo-500 disabled:opacity-40 rounded-lg font-medium transition">
+                                🧠 导出思维导图
+                            </button>
                             <button @click="exportGraphImage" :disabled="graphData.nodes.length === 0"
                                 class="w-full mt-2 py-2 bg-pink-600/80 hover:bg-pink-600 disabled:opacity-40 rounded-lg font-medium transition flex items-center justify-center">
                                 <span class="mr-2">📸</span> 导出图谱(PNG)
@@ -404,7 +572,7 @@
             </div>
 
             <!-- Middle Panel: Chat -->
-            <div class="flex-1 glass-card rounded-xl flex flex-col overflow-hidden">
+            <div class="flex-1 glass-card rounded-xl flex flex-col">
                 <div class="p-4 border-b border-white/10">
                     <h2 class="font-semibold">💬 讨论区</h2>
                     <p class="text-sm text-gray-400">{{ topic || '等待会议开始...' }}</p>
@@ -413,7 +581,8 @@
                 <div class="flex-1 overflow-y-auto p-4 space-y-3" id="chat-container">
                     <div v-for="(msg, idx) in messages" :key="idx" class="message-enter">
                         <!-- Facilitator Message -->
-                        <div v-if="msg.type === 'facilitator'" class="facilitator-msg rounded-xl p-4 max-w-2xl">
+                        <div v-if="msg.type === 'facilitator'"
+                            class="facilitator-msg rounded-xl p-4 max-w-full md:max-w-4xl">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">🎙️</span>
                                 <span class="font-bold">主持人</span>
@@ -421,7 +590,8 @@
                             </div>
                             <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
                         </div>
-                        <div v-if="msg.type === 'agent'" class="agent-msg rounded-xl p-4 max-w-2xl ml-8">
+                        <div v-if="msg.type === 'agent'"
+                            class="agent-msg rounded-xl p-4 max-w-full md:max-w-4xl ml-0 md:ml-8">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">👤</span>
                                 <span class="font-bold">{{ msg.sender }}</span>
@@ -433,7 +603,7 @@
                                 v-html="renderMarkdown(msg.content)"></div>
                         </div>
                         <div v-if="msg.type === 'human'"
-                            class="human-msg rounded-xl p-4 max-w-2xl ml-auto bg-blue-600/30 border border-blue-500/50">
+                            class="human-msg rounded-xl p-4 max-w-full md:max-w-3xl ml-auto bg-blue-600/30 border border-blue-500/50">
                             <div class="flex items-center gap-2 mb-2 justify-end">
                                 <span class="font-bold">{{ msg.sender }}</span>
                                 <span class="text-lg">🗣️</span>
@@ -455,7 +625,8 @@
                     </div>
 
                     <!-- Typing Indicator -->
-                    <div v-if="typingAgent" class="agent-msg rounded-xl p-4 max-w-2xl ml-8 opacity-70">
+                    <div v-if="typingAgent"
+                        class="agent-msg rounded-xl p-4 max-w-full md:max-w-4xl ml-0 md:ml-8 opacity-70">
                         <div class="flex items-center gap-2">
                             <span class="text-lg">💭</span>
                             <span class="font-medium">{{ typingAgent }}</span>
@@ -466,7 +637,8 @@
             </div>
 
             <!-- Right Panel: Visualization & Stats -->
-            <div class="w-80 glass-card rounded-xl p-4 flex flex-col overflow-y-auto shrink-0">
+            <div
+                class="w-full md:w-80 glass-card rounded-xl p-3 md:p-4 flex flex-col overflow-y-auto shrink-0 max-h-[50vh] md:max-h-none">
                 <!-- Online Users -->
                 <div v-if="onlineUsers.length > 0" class="mb-4">
                     <h2 class="font-semibold mb-2 flex items-center gap-2">
@@ -618,9 +790,13 @@
 
                     <div
                         class="p-4 border-t border-gray-700 bg-gray-900 rounded-b-lg flex justify-end space-x-4 no-print">
+                        <button @click="downloadPDF"
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex items-center">
+                            <span class="mr-2">📄</span> 下载 PDF (专业版)
+                        </button>
                         <button @click="printReport"
                             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center">
-                            <span class="mr-2">🖨️</span> 打印/另存为PDF
+                            <span class="mr-2">🖨️</span> 浏览器打印
                         </button>
                         <button @click="downloadMarkdown"
                             class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors flex items-center">
@@ -683,6 +859,82 @@
                     { id: "integrate", name: "整合阶段", emoji: "🔗", defaultRounds: 1 },
                     { id: "output", name: "输出方案", emoji: "📋", defaultRounds: 0 }
                 ]);
+
+                // History Management
+                const currentTab = ref('config'); // 'config' or 'history'
+                const pastSessions = ref([]);
+
+                const fetchSessions = async () => {
+                    try {
+                        const res = await fetch('/sessions');
+                        const data = await res.json();
+                        pastSessions.value = data.sessions;
+                    } catch (e) {
+                        console.error("Failed to fetch sessions:", e);
+                    }
+                };
+
+                const loadSessionHistory = async (sid) => {
+                    if (sessionActive.value && !confirm("当前有正在进行的会话，确定要切换吗？")) {
+                        return;
+                    }
+
+                    try {
+                        loading.value = true;
+                        const res = await fetch(`/sessions/${sid}/history`);
+                        if (!res.ok) throw new Error("Failed to load history");
+
+                        const data = await res.json();
+
+                        // Update state
+                        topic.value = data.session.topic;
+                        sessionId.value = data.session.id; // Switch ID
+                        currentPhase.value = data.session.current_phase;
+
+                        // Restore agents
+                        agents.value = data.agents.map(a => ({
+                            name: a.name,
+                            role: a.role,
+                            model_name: a.model,
+                            expertise: "", // Not stored efficiently yet
+                            style: "",
+                            personality_traits: []
+                        }));
+
+                        // Restore messages
+                        messages.value = data.history.map(m => ({
+                            sender: m.sender,
+                            content: m.content,
+                            type: m.type,
+                            role: m.role,
+                            model: m.model,
+                            phase_name: m.phase, // Should map back to name if possible, or just use value
+                            streaming: false
+                        }));
+
+                        // Set active but maybe 'read-only' mode? 
+                        // For now just show it.
+                        sessionActive.value = true;
+
+                        // Close sidebar on mobile if needed
+
+                    } catch (e) {
+                        console.error("Error loading history:", e);
+                        alert("加载历史会话失败");
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // Initial fetch
+                onMounted(() => {
+                    fetchSessions();
+                    fetchModels();
+                    fetchStatistics();
+
+                    // If session ID in URL is not default, try to load it? 
+                    // Or just let user click. 
+                });
 
                 // Phase rounds configuration
                 const phaseRounds = ref({
@@ -860,14 +1112,29 @@
                             scrollToBottom();
                         });
 
-                        // Handle streaming message chunks
+                        // Handle streaming message chunks with smooth typewriter effect
                         let streamingMessage = null;
+                        let chunkBuffer = ''; // Buffer to accumulate chunks
+                        let typewriterInterval = null;
 
                         eventSource.addEventListener('message_chunk', (e) => {
                             const data = JSON.parse(e.data);
 
                             // If this is a new streaming message or sender changed, create a new message bubble
                             if (!streamingMessage || streamingMessage.sender !== data.sender) {
+                                // CRITICAL FIX: Flush any remaining buffer to the previous message before switching
+                                if (streamingMessage && chunkBuffer) {
+                                    streamingMessage.content += chunkBuffer;
+                                    chunkBuffer = '';
+                                }
+
+                                // Clear any existing typewriter animation
+                                if (typewriterInterval) {
+                                    clearInterval(typewriterInterval);
+                                    typewriterInterval = null;
+                                }
+                                chunkBuffer = '';
+
                                 const phaseInfo = phases.value.find(p => p.id === data.phase);
                                 const newMsg = {
                                     sender: data.sender,
@@ -886,20 +1153,51 @@
                                 streamingMessage = messages.value[messages.value.length - 1];
                             }
 
-                            // Append the chunk to the streaming message proxy to trigger updates
-                            if (streamingMessage) {
-                                streamingMessage.content += data.chunk;
-                            }
+                            // Add chunk to buffer
+                            chunkBuffer += data.chunk;
 
-                            scrollToBottom();
+                            // Start smooth typewriter if not already running
+                            if (!typewriterInterval && streamingMessage) {
+                                // CAPTURE the current message object locally to prevent null reference errors
+                                // if streamingMessage variable is cleared externally
+                                const targetMessage = streamingMessage;
+
+                                typewriterInterval = setInterval(() => {
+                                    if (chunkBuffer.length > 0) {
+                                        // Speed up typing if buffer gets too large (adaptive speed)
+                                        // If streaming is done (targetMessage.streaming is false), flush faster
+                                        const isComplete = !targetMessage.streaming;
+                                        const charsToTake = (chunkBuffer.length > 50 || isComplete) ? 20 : 3;
+
+                                        const nextChars = chunkBuffer.substring(0, charsToTake);
+                                        targetMessage.content += nextChars;
+                                        chunkBuffer = chunkBuffer.substring(nextChars.length);
+                                        scrollToBottom();
+                                    } else if (!targetMessage.streaming) {
+                                        // Stop ONLY when streaming is done AND buffer is empty
+                                        clearInterval(typewriterInterval);
+                                        typewriterInterval = null;
+                                    }
+                                }, 20);
+                            }
                         });
 
                         eventSource.addEventListener('message_complete', (e) => {
                             const data = JSON.parse(e.data);
 
                             // Mark streaming as complete
+                            // Note: We don't verify strict equality of objects because streamingMessage might be a Proxy
                             if (streamingMessage && streamingMessage.sender === data.sender) {
+                                // Signal to the interval that streaming is done
                                 streamingMessage.streaming = false;
+
+                                // We DO NOT nullify streamingMessage immediately here anymore
+                                // Let the interval clean itself up when buffer is empty
+                                // creating a 'soft landing'
+                            }
+
+                            // Reset sender tracking only
+                            if (streamingMessage && streamingMessage.sender === data.sender) {
                                 streamingMessage = null;
                             }
 
@@ -1002,10 +1300,9 @@
                         await fetch('/session/resume', { method: 'POST' });
                         isPaused.value = false;
                     } else {
-                        if (confirm('确定要暂停当前会话吗？')) {
-                            await fetch('/session/pause', { method: 'POST' });
-                            isPaused.value = true;
-                        }
+                        // Removed confirm dialog to prevent UI blocking/flashing issue
+                        await fetch('/session/pause', { method: 'POST' });
+                        isPaused.value = true;
                     }
                 };
 
@@ -1018,29 +1315,28 @@
                 };
 
                 const resetSession = async () => {
-                    if (confirm('确定要重置会话吗？所有讨论记录将被清除。')) {
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        if (websocket) {
-                            websocket.close();
-                            websocket = null;
-                        }
-                        await fetch('/session/reset', { method: 'POST' });
-                        await fetch('/statistics/reset', { method: 'POST' });
-                        sessionActive.value = false;
-                        loading.value = false;
-                        messages.value = [];
-                        completedPhases.value = [];
-                        currentPhase.value = null;
-                        graphData.value = { nodes: [], links: [] };
-                        graphInstance = null;
-                        isPaused.value = false;
-                        typingAgent.value = null;
-                        statistics.value = {};
-                        onlineUsers.value = [];
+                    // Removed confirm dialog to fix UI flash issue
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
                     }
+                    if (websocket) {
+                        websocket.close();
+                        websocket = null;
+                    }
+                    await fetch('/session/reset', { method: 'POST' });
+                    await fetch('/statistics/reset', { method: 'POST' });
+                    sessionActive.value = false;
+                    loading.value = false;
+                    messages.value = [];
+                    completedPhases.value = [];
+                    currentPhase.value = null;
+                    graphData.value = { nodes: [], links: [] };
+                    graphInstance = null;
+                    isPaused.value = false;
+                    typingAgent.value = null;
+                    statistics.value = {};
+                    onlineUsers.value = [];
                 };
 
                 // Fetch statistics from server
@@ -1120,12 +1416,40 @@
                     mermaid.initialize({ startOnLoad: false, theme: 'dark' });
                 }
 
-                // Markdown rendering function
+                // Markdown rendering function with syntax highlighting
                 const renderMarkdown = (content) => {
                     if (!content) return '';
                     try {
-                        return marked.parse(content);
+                        // Configure marked with syntax highlighting
+                        marked.setOptions({
+                            highlight: function (code, lang) {
+                                if (lang && hljs.getLanguage(lang)) {
+                                    try {
+                                        return hljs.highlight(code, { language: lang }).value;
+                                    } catch (e) {
+                                        console.error('Highlight error:', e);
+                                    }
+                                }
+                                return hljs.highlightAuto(code).value;
+                            },
+                            breaks: true,
+                            gfm: true
+                        });
+
+                        const html = marked.parse(content);
+
+                        // Apply syntax highlighting to any code blocks that may have been missed
+                        setTimeout(() => {
+                            document.querySelectorAll('pre code').forEach((block) => {
+                                if (!block.classList.contains('hljs')) {
+                                    hljs.highlightElement(block);
+                                }
+                            });
+                        }, 50);
+
+                        return html;
                     } catch (e) {
+                        console.error('Markdown rendering error:', e);
                         return content;
                     }
                 };
@@ -1173,6 +1497,23 @@
                     content += summaryMsg.content;
 
                     downloadFile(content, `innovation_report_${dateStr}.md`, 'text/markdown');
+                };
+
+                const downloadPDF = () => {
+                    const element = document.getElementById('report-content');
+                    if (!element) return;
+
+                    const opt = {
+                        margin: [10, 10, 20, 10], // top, left, bottom, right (mm)
+                        filename: `innovation_report_${new Date().toISOString().slice(0, 10)}.pdf`,
+                        image: { type: 'jpeg', quality: 0.98 },
+                        html2canvas: { scale: 2, useCORS: true },
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+                    };
+
+                    // Add header/footer workaround or just clean export
+                    html2pdf().set(opt).from(element).save();
                 };
 
                 // Export knowledge graph to Mermaid MD
@@ -1239,6 +1580,47 @@
                     mdContent += `- 🔵 **青色节点**: 讨论内容\n`;
 
                     downloadFile(mdContent, `knowledge_graph_${dateStr}.md`, 'text/markdown');
+                };
+
+                // Export Mindmap (Mermaid)
+                const exportMindMap = () => {
+                    if (!graphData.value.nodes || graphData.value.nodes.length === 0) {
+                        alert("暂无数据可导出");
+                        return;
+                    }
+
+                    const now = new Date();
+                    const dateStr = now.toISOString().slice(0, 10);
+
+                    let mmCode = 'mindmap\n';
+                    mmCode += `  root((${topic.value || 'Central Topic'}))\n`;
+
+                    // Group 1: Agents
+                    mmCode += `    ::icon(fa fa-users)\n`;
+                    mmCode += `    Agents\n`;
+                    agents.value.forEach(a => {
+                        let name = a.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                        if (name) {
+                            mmCode += `      ${name}\n`;
+                            mmCode += `        ::icon(fa fa-user)\n`;
+                        }
+                    });
+
+                    // Group 2: Key Concepts (from keywords nodes in graph)
+                    mmCode += `    Concepts\n`;
+                    mmCode += `      ::icon(fa fa-lightbulb)\n`;
+
+                    // Filter just keyword nodes
+                    const keywords = graphData.value.nodes.filter(n => n.type === 'keyword').slice(0, 15); // Top 15
+                    keywords.forEach(kw => {
+                        const val = kw.id.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                        if (val) mmCode += `      ${val}\n`;
+                    });
+
+                    let mdContent = `# 头脑风暴思维导图\n\n`;
+                    mdContent += '```mermaid\n' + mmCode + '```\n\n';
+
+                    downloadFile(mdContent, `mindmap_${dateStr}.md`, 'text/markdown');
                 };
 
                 // Export graph as PNG
@@ -1312,10 +1694,6 @@
                     }
                 };
 
-                onMounted(() => {
-                    fetchModels();
-                });
-
                 return {
                     sessionActive, loading, topic, messages, typingAgent,
                     currentPhase, phaseName, phaseEmoji, completedPhases,
@@ -1323,11 +1701,12 @@
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
                     statistics, onlineUsers, userName, userMessage,
                     showReportModal, reportContent, availableModels,
+                    currentTab, pastSessions, fetchSessions, loadSessionHistory, // Added History vars
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
                     renderMarkdown, exportSummaryMD, exportGraphMermaid, exportGraphImage, exportFullChat,
                     fetchStatistics, sendMentionMessage, fetchOnlineUsers, createNewSession,
-                    printReport, downloadMarkdown
+                    printReport, downloadMarkdown, downloadPDF, exportMindMap
                 };
             }
         });

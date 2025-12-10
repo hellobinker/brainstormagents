@@ -27,6 +27,7 @@ SUMMARY_MODEL = "gemini-3-pro-preview"
 
 # Available models shown in frontend dropdown
 AVAILABLE_MODELS = [
+    "gemini-2.5-flash-lite-thinking",
     "gemini-3-pro-preview",
     "grok-4.1-fast", 
     "gpt-5-mini", 

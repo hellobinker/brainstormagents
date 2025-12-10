@@ -30,7 +30,13 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Query
 
+from database import init_db, get_db, SessionLocal, Session as DBSession, Message as DBMessage, Agent as DBAgent
+import datetime
+
 app = FastAPI()
+
+# Initialize Database
+init_db()
 
 # CORS for SSE
 app.add_middleware(
@@ -103,6 +109,84 @@ def create_sse_message(event: str, data: dict) -> str:
     """Create SSE formatted message"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+def save_message_to_db(session_id: str, sender: str, content: str, msg_type: str, phase: str = None, role: str = None, model: str = None):
+    """Helper to save message to SQLite"""
+    try:
+        db = SessionLocal()
+        new_msg = DBMessage(
+            session_id=session_id,
+            sender=sender,
+            content=content,
+            type=msg_type,
+            phase=phase,
+            role=role,
+            model=model,
+            timestamp=datetime.datetime.now()
+        )
+        db.add(new_msg)
+        db.commit()
+        db.close()
+    except Exception as e:
+        print(f"Error saving message to DB: {e}")
+
+@app.get("/sessions")
+def list_sessions():
+    """List past sessions from DB"""
+    db = SessionLocal()
+    try:
+        sessions = db.query(DBSession).order_by(DBSession.created_at.desc()).all()
+        return {
+            "sessions": [
+                {
+                    "id": s.id,
+                    "topic": s.topic,
+                    "created_at": s.created_at.isoformat(),
+                    "agent_count": len(s.agents)
+                }
+                for s in sessions
+            ]
+        }
+    finally:
+        db.close()
+
+@app.get("/sessions/{session_id}/history")
+def get_session_history(session_id: str):
+    """Get full chat history for a session"""
+    db = SessionLocal()
+    try:
+        session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Sort messages by ID (insertion order)
+        messages = sorted(session.messages, key=lambda m: m.id)
+        
+        return {
+            "session": {
+                "id": session.id,
+                "topic": session.topic,
+                "current_phase": session.current_phase
+            },
+            "history": [
+                {
+                    "sender": m.sender,
+                    "content": m.content,
+                    "type": m.type,
+                    "timestamp": m.timestamp.isoformat(),
+                    "role": m.role,
+                    "model": m.model,
+                    "phase": m.phase
+                }
+                for m in messages
+            ],
+            "agents": [
+                {"name": a.name, "role": a.role, "model": a.model}
+                for a in session.agents
+            ]
+        }
+    finally:
+        db.close()
+
 @app.post("/session/start")
 def start_session(request: StartSessionRequest):
     state = get_session_or_create(request.session_id)
@@ -137,7 +221,34 @@ def start_session(request: StartSessionRequest):
     if not state.facilitator:
         state.facilitator = Facilitator(state.llm_client)
         # model_name is now set from config.DEFAULT_MODEL in Facilitator.__init__
-        
+
+    # PERSISTENCE: Save Session and Agents to DB
+    try:
+        db = SessionLocal()
+        # Check if session already exists in DB
+        existing = db.query(DBSession).filter(DBSession.id == state.session_id).first()
+        if not existing:
+            db_session = DBSession(
+                id=state.session_id,
+                topic=request.topic,
+                current_phase=state.facilitator.current_phase.value
+            )
+            db.add(db_session)
+            
+            for agent in agent_instances:
+                db_agent = DBAgent(
+                    session_id=state.session_id,
+                    name=agent.name,
+                    role=agent.role,
+                    model=agent.model_name
+                )
+                db.add(db_agent)
+            
+            db.commit()
+        db.close()
+    except Exception as e:
+        print(f"Error saving session start to DB: {e}")
+
     return {
         "status": "started",
         "session_id": state.session_id,
@@ -184,6 +295,12 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
     
     state.session.add_message(Message("主持人", intro, {"type": "facilitator_intro", "phase": state.facilitator.current_phase.value}))
     state.session_stats.record_message("主持人", intro, {"type": "facilitator"})
+    
+    # PERSISTENCE
+    save_message_to_db(
+        state.session_id, "主持人", intro, "facilitator", 
+        phase=state.facilitator.current_phase.value
+    )
     
     await asyncio.sleep(0.3)
     
@@ -280,6 +397,14 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
                     "emotion": agent.current_emotion
                 })
                 
+                # PERSISTENCE
+                save_message_to_db(
+                    state.session_id, agent.name, full_response, "agent",
+                    phase=state.facilitator.current_phase.value,
+                    role=agent.role,
+                    model=agent.model_name
+                )
+                
                 # Update visualization and send graph data
                 state.visualizer.update_graph(state.session.history)
                 graph_json = state.visualizer.export_data()
@@ -370,6 +495,9 @@ async def run_full_session_stream(session_id: str = "default") -> AsyncGenerator
     
     state.session.add_message(Message("📋 创新方案报告", summary, {"type": "summary"}))
     state.session_stats.record_message("System", summary, {"type": "summary"})
+    
+    # PERSISTENCE
+    save_message_to_db(state.session_id, "System", summary, "summary")
     
     yield create_sse_message("summary", {"content": summary})
     
@@ -717,6 +845,9 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str, session_id: s
                     state.session.add_message(msg)
                     state.session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
                     
+                    # PERSISTENCE
+                    save_message_to_db(session_id, f"👤 {user_name}", content, "human")
+                    
                     # 触发被@的智能体响应
                     for agent_name in mentioned:
                         agent = next((a for a in state.session.agents if a.name == agent_name), None)
@@ -741,6 +872,12 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str, session_id: s
                             
                             state.session.add_message(Message(agent.name, response, {"role": agent.role}))
                             state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
+                            
+                            # PERSISTENCE
+                            save_message_to_db(
+                                session_id, agent.name, response, "agent", 
+                                role=agent.role, model=agent.model_name
+                            )
                 
                 # 如果没有提及，也是一种通用的参与
                 else:
@@ -822,6 +959,9 @@ async def handle_mention(request: MentionRequest):
             "content": request.content,
             "mentions": mentioned
         })
+
+        # PERSISTENCE: Save human message
+        save_message_to_db(request.session_id, f"👤 {request.sender}", request.content, "human")
         
         # 触发智能体响应
         for agent_name in mentioned:
@@ -847,6 +987,12 @@ async def handle_mention(request: MentionRequest):
                 state.session.add_message(Message(agent.name, response, {"role": agent.role}))
                 state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
                 
+                # PERSISTENCE: Save agent response
+                save_message_to_db(
+                    request.session_id, agent.name, response, "agent", 
+                    role=agent.role, model=agent.model_name
+                )
+
                 # Broadcast response via WebSocket
                 await ws_manager.broadcast(request.session_id, {
                     "type": "agent_response",
@@ -858,6 +1004,10 @@ async def handle_mention(request: MentionRequest):
         return {"status": "processed", "mentions": mentioned}
     
     # 如果没有 Session，或者没有 Mention
+    # PERSISTENCE: Save human message even if no mention triggered (just recording)
+    if state.session and not mention_parser.has_mention(request.content):
+         save_message_to_db(request.session_id, f"👤 {request.sender}", request.content, "human")
+
     return {"status": "recorded"}
 
 # ============ Statistics Endpoints ============
