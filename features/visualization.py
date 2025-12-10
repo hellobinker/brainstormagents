@@ -38,9 +38,12 @@ class RealTimeVisualizer:
             
             sender = msg.sender
             
-            # Add agent node if new
+            is_human = msg.metadata.get('type') == 'human'
+            
+            # Add agent/human node if new
             if sender not in self.agent_nodes:
-                self.graph.add_node(sender, type="agent", label=sender)
+                node_type = "human" if is_human else "agent"
+                self.graph.add_node(sender, type=node_type, label=sender)
                 self.agent_nodes.add(sender)
             
             # Add message node
@@ -56,15 +59,15 @@ class RealTimeVisualizer:
                     self.graph.add_node(kw_node, type="keyword", label=kw)
                 self.graph.add_edge(msg_node_id, kw_node)
                 
-                # Connect agents who mention same keywords
+                # Connect agents/humans who mention same keywords
                 if kw not in self.keywords:
                     self.keywords[kw] = []
                 if sender not in self.keywords[kw]:
                     self.keywords[kw].append(sender)
-                    # Connect this agent to others who mentioned same keyword
-                    for other_agent in self.keywords[kw]:
-                        if other_agent != sender:
-                            self.graph.add_edge(sender, other_agent, type="shared_topic")
+                    # Connect this participant to others who mentioned same keyword
+                    for other_participant in self.keywords[kw]:
+                        if other_participant != sender:
+                            self.graph.add_edge(sender, other_participant, type="shared_topic")
 
     def export_data(self) -> str:
         """Exports the graph data to JSON format for force-graph"""
@@ -78,6 +81,7 @@ class RealTimeVisualizer:
             # Different colors for different node types
             color = {
                 'agent': '#ff6b6b',     # Red for agents
+                'human': '#3399ff',     # Blue for human users
                 'message': '#4ecdc4',   # Teal for messages
                 'keyword': '#ffe66d'    # Yellow for keywords
             }.get(node_type, '#95a5a6')
@@ -85,6 +89,7 @@ class RealTimeVisualizer:
             # Different sizes for different node types
             size = {
                 'agent': 12,
+                'human': 14,            # Slightly larger for human
                 'message': 6,
                 'keyword': 8
             }.get(node_type, 5)

@@ -6,8 +6,8 @@ import time
 class Message:
     sender: str
     content: str
-    timestamp: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: float = field(default_factory=time.time)
     # metadata can include: 'emotion', 'role', 'round', 'type' (idea, critique, etc.)
 
 @dataclass

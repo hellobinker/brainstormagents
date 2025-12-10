@@ -14,6 +14,7 @@ from features.visualization import RealTimeVisualizer
 from core.session_manager import session_manager, SessionState
 from features.websocket_manager import ws_manager  # Use global singleton
 from features.statistics import SessionStatistics
+from features.mention_parser import MentionParser
 import uvicorn
 import os
 import json
@@ -50,6 +51,23 @@ def create_session():
     """Create a new brainstorming session"""
     session_id = session_manager.create_session()
     return {"session_id": session_id}
+
+@app.get("/models")
+async def get_available_models():
+    """Fetch available models from the API"""
+    # Use default credentials
+    DEFAULT_API_KEY = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
+    DEFAULT_BASE_URL = "https://yunwu.ai/v1"
+    
+    # Init temp client
+    client = LLMClient(api_key=DEFAULT_API_KEY, base_url=DEFAULT_BASE_URL)
+    models = client.list_models()
+    
+    # Fallback if list is empty
+    if not models:
+        models = ["grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4", "gpt-5.1"]
+        
+    return {"models": models}
 
 
 # Data Models
@@ -90,27 +108,43 @@ def start_session(request: StartSessionRequest):
     state = get_session_or_create(request.session_id)
     
     # Initialize LLM Client
+    # Restoring real API configuration as verified working with gpt-4
     DEFAULT_API_KEY = "sk-j3MQdosfgMzzOHOtA7MUnrxHSNIdaO44FzMlk7RRJIcjrf8r"
     DEFAULT_BASE_URL = "https://yunwu.ai/v1"
     
     api_key = request.api_key or os.environ.get("OPENAI_API_KEY") or DEFAULT_API_KEY
     base_url = request.base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
     
-    session = BrainstormingSession(request.topic, agents, llm_client)
-    facilitator = Facilitator(
-        llm_client, 
-        model_name="gpt-5.1",
-        custom_rounds=request.phase_rounds or {}
-    )
-    visualizer = RealTimeVisualizer()
+    # Update state LLM client
+    state.llm_client = LLMClient(api_key=api_key, base_url=base_url)
     
+    # Create Agent instances
+    agent_instances = []
+    for agent_conf in request.agents:
+        agent_instances.append(Agent(
+            name=agent_conf.name,
+            role=agent_conf.role,
+            expertise=agent_conf.expertise,
+            style=agent_conf.style,
+            personality_traits=agent_conf.personality_traits,
+            model_name=agent_conf.model_name
+        ))
+    
+    # Initialize session in state
+    state.initialize_session(request.topic, agent_instances, request.phase_rounds)
+    
+    # Facilitator model (keep original default or what was passed)
+    if state.facilitator:
+        state.facilitator.model_name = "grok-4.1-fast"
+        
     return {
-        "message": "Session started",
+        "status": "started",
+        "session_id": state.session_id,
         "topic": request.topic,
-        "agent_count": len(agents),
+        "agent_count": len(agent_instances),
+        "phase_rounds": state.facilitator.phase_rounds,
         "current_phase": state.facilitator.current_phase.value,
-        "phase_name": PHASE_CONFIG[state.facilitator.current_phase]["name"],
-        "phase_rounds": request.phase_rounds or {}
+        "phase_name": PHASE_CONFIG[state.facilitator.current_phase]["name"]
     }
 
 async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None]:
@@ -129,13 +163,13 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
         "phase": state.facilitator.current_phase.value,
         "name": phase_name,
         "emoji": phase_config["emoji"],
-        "description": phase_config["description"]
+        "description": phase_config.get("description", "")
     })
     
     # Facilitator Intro
     # Use state.llm_client
     intro = state.llm_client.get_completion(
-        system_prompt=state.facilitator.role_prompt,
+        system_prompt=state.facilitator.get_system_prompt(),
         user_prompt=f"Please introduce the '{phase_name}' phase for the topic: {topic}. Be brief and encouraging.",
         model="gpt-5.1"
     )
@@ -168,10 +202,24 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
                 # Build context
                 history_text = "\n".join([f"{m.sender}: {m.content}" for m in state.session.history[-15:]])
                 
+                # Check for recent human input to prioritize interaction
+                human_instruction = ""
+                # Also check interrupt_signal for immediate priority
+                is_interrupt = state.interrupt_signal
+                if is_interrupt:
+                    state.interrupt_signal = False # Consume signal
+                    print(f"⚠️ Interrupt detected for agent {agent.name}")
+
+                for m in reversed(state.session.history[-3:]):
+                     if m.metadata.get("type") == "human":
+                         prefix = "🔴【紧急插播】" if is_interrupt else "⚠️【特别指令】"
+                         human_instruction = f"\n\n{prefix} 用户刚刚参与了讨论！请务必优先回应用户的观点或问题 ('{m.content}')，与其进行互动，然后再继续阐述你的看法。"
+                         break
+
                 full_prompt = f"""{agent_prompt}
 
 【讨论历史】
-{history_text}
+{history_text}{human_instruction}
 
 请开始你的发言："""
                 
@@ -743,6 +791,7 @@ def get_online_users(session_id: str = "default"):
 class MentionRequest(BaseModel):
     sender: str
     content: str
+    session_id: str = "default"
 
 @app.post("/session/mention")
 async def handle_mention(request: MentionRequest):
@@ -750,10 +799,15 @@ async def handle_mention(request: MentionRequest):
     state = get_session_or_create(request.session_id)
     
     # 记录人类消息
+    if not state.session:
+        raise HTTPException(status_code=400, detail="会话未开始，请先点击'启动头脑风暴'")
+        
     msg = Message(f"👤 {request.sender}", request.content, {"type": "human"})
-    if state.session:
-        state.session.add_message(msg)
-        state.session_stats.record_message(f"👤 {request.sender}", request.content, {"type": "human"})
+    state.session.add_message(msg)
+    state.session_stats.record_message(f"👤 {request.sender}", request.content, {"type": "human"})
+    
+    # Trigger interrupt for immediate attention
+    state.interrupt_signal = True
     
     # 解析@提及
     if state.session and mention_parser.has_mention(request.content):

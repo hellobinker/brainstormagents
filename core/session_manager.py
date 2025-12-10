@@ -3,11 +3,14 @@ import uuid
 from core.session import BrainstormingSession
 from core.facilitator import Facilitator
 from core.agent import Agent
-from features.visualization import KnowledgeGraphVisualizer
+from features.visualization import RealTimeVisualizer
 from features.statistics import SessionStatistics
-from features.emotion_engine import EmotionEngine
-from features.role_switcher import RoleSwitcher
-from features.advanced_techniques import DebateMode, CrossDomainConnector, ChainDeepening
+from features.emotion_engine import EmotionalIntelligenceEngine
+from features.role_switcher import DynamicRoleSwitcher
+# Note: CrossDomainConnector is in features.knowledge, but we also imported it from advanced_techniques below?
+# Let's check where it really is. Based on server.py, it's features.knowledge.
+from features.knowledge import CrossDomainConnector 
+from features.advanced_techniques import DebateMode, ChainDeepening
 from utils.llm_client import LLMClient
 
 class SessionState:
@@ -16,25 +19,34 @@ class SessionState:
         self.session_id = session_id
         self.session: Optional[BrainstormingSession] = None
         self.facilitator: Optional[Facilitator] = None
-        self.visualizer = KnowledgeGraphVisualizer()
+        self.visualizer = RealTimeVisualizer()
         self.session_stats = SessionStatistics()
         
         # Features
-        self.emotion_engine = EmotionEngine()
-        self.role_switcher = RoleSwitcher()
-        self.debate_mode = DebateMode()
+        self.emotion_engine = EmotionalIntelligenceEngine()
+        self.role_switcher = DynamicRoleSwitcher()
+        self.debate_mode = DebateMode(None) # These need llm_client, let's init lazily or pass None for now
         self.cross_domain_connector = CrossDomainConnector()
-        self.chain_deepening = ChainDeepening()
+        self.chain_deepening = ChainDeepening(None)
         
         # State flags
         self.is_paused = False
+        self.interrupt_signal = False  # Signal for immediate human intervention checks
         self.llm_client = LLMClient()  # Each session can have its own client config if needed
 
-    def initialize_session(self, topic: str, agents: List[Agent], phase_rounds: int = 1):
-        self.session = BrainstormingSession(topic, agents)
+    def initialize_session(self, topic: str, agents: List[Agent], phase_rounds: Optional[Dict[str, int]] = None):
+        self.session = BrainstormingSession(topic, agents, self.llm_client)
         self.session.rounds = 0 # Reset rounds
-        self.facilitator = Facilitator(self.session)
-        self.facilitator.phase_rounds = phase_rounds
+        
+        # Reset visualizer and stats for fresh session
+        self.visualizer = RealTimeVisualizer()
+        self.session_stats = SessionStatistics()
+        
+        # Facilitator requires llm_client, not session
+        self.facilitator = Facilitator(self.llm_client, custom_rounds=phase_rounds)
+        
+        # Also expose phase_rounds attribute for backward compatibility if needed, though Facilitator.custom_rounds is used
+        self.facilitator.phase_rounds = phase_rounds or {}
         
         # Initialize features with session
         self.debate_mode.llm_client = self.llm_client

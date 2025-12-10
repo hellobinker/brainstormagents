@@ -2,7 +2,7 @@ from typing import List, Dict, Any
 from core.protocol import Message
 
 class Agent:
-    def __init__(self, name: str, role: str, expertise: str, style: str, personality_traits: List[str], model_name: str = "gpt-5.1"):
+    def __init__(self, name: str, role: str, expertise: str, style: str, personality_traits: List[str], model_name: str = "gemini-3-pro-preview"):
         self.name = name
         self.role = role
         self.expertise = expertise

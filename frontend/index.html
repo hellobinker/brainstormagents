@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/force-graph"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -159,6 +160,52 @@
             font-size: 0.9em;
         }
 
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+
+        /* Print Styles for Report */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+
+            #report-content,
+            #report-content * {
+                visibility: visible;
+            }
+
+            #report-content {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                color: black !important;
+                background: white !important;
+                padding: 20px;
+            }
+
+            /* Hide modal buttons when printing */
+            .no-print {
+                display: none !important;
+            }
+        }
+
         .markdown-content pre {
             background: rgba(0, 0, 0, 0.3);
             padding: 0.8rem;
@@ -223,7 +270,7 @@
         <!-- Main Content -->
         <div class="flex-1 flex overflow-hidden p-4 gap-4">
             <!-- Left Panel: Config & Agents -->
-            <div class="w-80 glass-card rounded-xl p-4 overflow-y-auto">
+            <div class="w-80 glass-card rounded-xl p-4 overflow-y-auto shrink-0">
                 <div v-if="!sessionActive">
                     <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
                         <span>⚙️</span> 会话配置
@@ -249,10 +296,9 @@
                             <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
                             <select v-model="agent.model_name"
                                 class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
-                                <option value="gpt-5.1">GPT-5.1</option>
-                                <option value="grok-4.1-fast">Grok 4.1</option>
-                                <option value="claude-sonnet-4-5-20250929">Claude 4.5</option>
-                                <option value="gemini-3-pro-preview">Gemini 3</option>
+                                <option v-for="model in availableModels" :key="model" :value="model">
+                                    {{ model }}
+                                </option>
                             </select>
                         </div>
                     </div>
@@ -334,11 +380,19 @@
                             <p class="text-xs text-gray-400 mb-2">📤 导出功能</p>
                             <button @click="exportSummaryMD" :disabled="!hasSummary"
                                 class="w-full py-2 bg-blue-500/80 hover:bg-blue-500 disabled:opacity-40 rounded-lg font-medium transition mb-2">
-                                📄 导出方案(MD)
+                                📄 预览/导出方案(MD)
                             </button>
                             <button @click="exportGraphMermaid" :disabled="graphData.nodes.length === 0"
                                 class="w-full py-2 bg-purple-500/80 hover:bg-purple-500 disabled:opacity-40 rounded-lg font-medium transition">
                                 🔮 导出图谱(Mermaid)
+                            </button>
+                            <button @click="exportGraphImage" :disabled="graphData.nodes.length === 0"
+                                class="w-full mt-2 py-2 bg-pink-600/80 hover:bg-pink-600 disabled:opacity-40 rounded-lg font-medium transition flex items-center justify-center">
+                                <span class="mr-2">📸</span> 导出图谱(PNG)
+                            </button>
+                            <button @click="exportFullChat" :disabled="messages.length === 0"
+                                class="w-full mt-2 py-2 bg-gray-600/80 hover:bg-gray-600 disabled:opacity-40 rounded-lg font-medium transition flex items-center justify-center">
+                                <span class="mr-2">💬</span> 导出完整对话
                             </button>
                         </div>
                     </div>
@@ -363,9 +417,7 @@
                             </div>
                             <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
                         </div>
-
-                        <!-- Agent Message -->
-                        <div v-else-if="msg.type === 'agent'" class="agent-msg rounded-xl p-4 max-w-2xl ml-8">
+                        <div v-if="msg.type === 'agent'" class="agent-msg rounded-xl p-4 max-w-2xl ml-8">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">👤</span>
                                 <span class="font-bold">{{ msg.sender }}</span>
@@ -376,18 +428,22 @@
                             <div class="markdown-content" :class="{'streaming-cursor': msg.streaming}"
                                 v-html="renderMarkdown(msg.content)"></div>
                         </div>
-
-                        <!-- Summary -->
-                        <div v-else-if="msg.type === 'summary'" class="summary-section rounded-xl p-4 mt-4">
+                        <div v-if="msg.type === 'human'"
+                            class="human-msg rounded-xl p-4 max-w-2xl ml-auto bg-blue-600/30 border border-blue-500/50">
+                            <div class="flex items-center gap-2 mb-2 justify-end">
+                                <span class="font-bold">{{ msg.sender }}</span>
+                                <span class="text-lg">🗣️</span>
+                            </div>
+                            <div class="markdown-content whitespace-pre-wrap" v-text="msg.content"></div>
+                        </div>
+                        <div v-if="msg.type === 'summary'" class="summary-section rounded-xl p-4 mt-4">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">📋</span>
                                 <span class="font-bold">创新方案报告</span>
                             </div>
                             <div class="markdown-content text-sm" v-html="renderMarkdown(msg.content)"></div>
                         </div>
-
-                        <!-- Phase Transition -->
-                        <div v-else-if="msg.type === 'phase'" class="text-center py-2">
+                        <div v-if="msg.type === 'phase'" class="text-center py-2">
                             <span class="bg-purple-500/30 px-4 py-1 rounded-full text-sm">
                                 {{ msg.emoji }} {{ msg.content }}
                             </span>
@@ -406,7 +462,7 @@
             </div>
 
             <!-- Right Panel: Visualization & Stats -->
-            <div class="w-80 glass-card rounded-xl p-4 flex flex-col overflow-y-auto">
+            <div class="w-80 glass-card rounded-xl p-4 flex flex-col overflow-y-auto shrink-0">
                 <!-- Online Users -->
                 <div v-if="onlineUsers.length > 0" class="mb-4">
                     <h2 class="font-semibold mb-2 flex items-center gap-2">
@@ -492,10 +548,11 @@
                     </div>
                     <input v-model="userName" placeholder="你的昵称"
                         class="w-full bg-white/10 border border-white/20 rounded px-2 py-1.5 text-sm mb-2">
-                    <textarea v-model="userMessage" placeholder="输入消息... (例如: @产品经理 你怎么看?)" rows="2"
+                    <textarea v-model="userMessage" @keyup.enter.prevent="sendMentionMessage"
+                        placeholder="输入消息... (例如: @产品经理 你怎么看?)" rows="2"
                         class="w-full bg-white/10 border border-white/20 rounded px-2 py-1.5 text-sm resize-none"></textarea>
-                    <button @click="sendMentionMessage" :disabled="!userMessage.trim()"
-                        class="w-full mt-2 py-2 bg-gradient-to-r from-green-500 to-teal-500 rounded font-medium text-sm hover:opacity-90 disabled:opacity-50">
+                    <button @click="sendMentionMessage"
+                        class="w-full mt-2 py-2 bg-gradient-to-r from-green-500 to-teal-500 rounded font-medium text-sm hover:opacity-90 active:scale-95 transition-transform">
                         📤 发送消息
                     </button>
                 </div>
@@ -519,12 +576,66 @@
                 </div>
             </div>
         </div>
-    </div>
 
+
+        <!-- Report Preview Modal -->
+        <teleport to="body">
+            <div v-if="showReportModal"
+                class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-[1000]">
+                <div
+                    class="bg-gray-800 rounded-lg w-full max-w-4xl h-[90vh] flex flex-col shadow-2xl border border-gray-700">
+                    <div
+                        class="flex justify-between items-center p-4 border-b border-gray-700 bg-gray-900 rounded-t-lg no-print">
+                        <h3
+                            class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
+                            📄 创新方案报告预览
+                        </h3>
+                        <button @click="showReportModal = false"
+                            class="text-gray-400 hover:text-white transition-colors">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12">
+                                </path>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="flex-1 overflow-y-auto p-8 bg-white text-gray-900" id="report-content">
+                        <!-- Rendered Markdown Report -->
+                        <div class="prose prose-lg max-w-none" v-html="renderMarkdown(reportContent)"></div>
+
+                        <hr class="my-8 border-gray-300" />
+
+                        <div class="text-sm text-gray-500 text-center">
+                            <p>生成于 Multi-Agent Brainstorming System</p>
+                            <p>{{ new Date().toLocaleString() }}</p>
+                        </div>
+                    </div>
+
+                    <div
+                        class="p-4 border-t border-gray-700 bg-gray-900 rounded-b-lg flex justify-end space-x-4 no-print">
+                        <button @click="printReport"
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center">
+                            <span class="mr-2">🖨️</span> 打印/另存为PDF
+                        </button>
+                        <button @click="downloadMarkdown"
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors flex items-center">
+                            <span class="mr-2">⬇️</span> 下载 Markdown
+                        </button>
+                        <button @click="showReportModal = false"
+                            class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </teleport>
+
+    </div>
     <script>
         const { createApp, ref, onMounted, nextTick, computed } = Vue;
 
-        createApp({
+        const app = createApp({
             setup() {
                 const sessionActive = ref(false);
                 const loading = ref(false);
@@ -551,6 +662,13 @@
 
                 // Session Management
                 const sessionId = ref(new URLSearchParams(window.location.search).get('room') || 'default');
+
+                // Report Modal State
+                const showReportModal = ref(false);
+                const reportContent = ref("");
+
+                // Available API Models
+                const availableModels = ref(["grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4"]);
 
                 const phases = ref([
                     { id: "opening", name: "启动会话", emoji: "🎬", defaultRounds: 0 },
@@ -626,13 +744,14 @@
                 ];
 
                 const agents = ref([
-                    { ...expertPresets[0], model_name: "gpt-5.1" },
-                    { ...expertPresets[5], model_name: "gpt-5.1" },
-                    { ...expertPresets[30], model_name: "claude-sonnet-4-5-20250929" }
+                    { ...expertPresets[0], model_name: "grok-4.1-fast" },
+                    { ...expertPresets[5], model_name: "gpt-5-mini" },
+                    { ...expertPresets[30], model_name: "gemini-2.5-flash" }
                 ]);
 
                 const addPresetAgent = (preset) => {
-                    agents.value.push({ ...preset, model_name: "gpt-5.1" });
+                    // Default to grok-4.1-fast when adding new agents
+                    agents.value.push({ ...preset, model_name: "grok-4.1-fast" });
                     showPresetModal.value = false;
                 };
 
@@ -673,6 +792,15 @@
                                 });
                                 scrollToBottom();
                             }
+                        } else if (data.type === 'agent_message') {
+                            // Handle agent responses to mentions
+                            messages.value.push({
+                                type: 'agent',
+                                sender: data.sender,
+                                content: data.content,
+                                role: data.role || '回复@提及'
+                            });
+                            scrollToBottom();
                         } else if (data.type === 'online_users') {
                             onlineUsers.value = data.users;
                         }
@@ -705,7 +833,7 @@
                         phaseName.value = startData.phase_name;
 
                         // Start streaming
-                        const eventSource = new EventSource(`/session/stream_full?session_id=${sessionId.value}`);
+                        eventSource = new EventSource(`/session/stream_full?session_id=${sessionId.value}`);
 
                         // Connect WebSocket for collaboration
                         connectWebSocket();
@@ -734,24 +862,31 @@
                         eventSource.addEventListener('message_chunk', (e) => {
                             const data = JSON.parse(e.data);
 
-                            // If this is a new streaming message, create it
+                            // If this is a new streaming message or sender changed, create a new message bubble
                             if (!streamingMessage || streamingMessage.sender !== data.sender) {
                                 const phaseInfo = phases.value.find(p => p.id === data.phase);
-                                streamingMessage = {
+                                const newMsg = {
                                     sender: data.sender,
                                     content: '',
-                                    type: data.type,
+                                    type: data.type || 'chat',
                                     role: data.role,
                                     emotion: data.emotion,
                                     model: data.model,
                                     phase_name: phaseInfo ? phaseInfo.name : '',
+                                    timestamp: new Date().toLocaleTimeString(),
                                     streaming: true
                                 };
-                                messages.value.push(streamingMessage);
+                                messages.value.push(newMsg);
+
+                                // CRITICAL for Vue 3 Reactivity: Capture the Proxy object from the array
+                                streamingMessage = messages.value[messages.value.length - 1];
                             }
 
-                            // Append the chunk to the streaming message
-                            streamingMessage.content += data.chunk;
+                            // Append the chunk to the streaming message proxy to trigger updates
+                            if (streamingMessage) {
+                                streamingMessage.content += data.chunk;
+                            }
+
                             scrollToBottom();
                         });
 
@@ -908,7 +1043,11 @@
 
                 // Send @mention message
                 const sendMentionMessage = async () => {
-                    if (!userMessage.value.trim()) return;
+                    console.log("Send clicked. content:", userMessage.value);
+                    if (!userMessage.value.trim()) {
+                        console.log("Empty message, ignoring");
+                        return;
+                    }
 
                     const msgContent = userMessage.value;
                     const senderName = userName.value || '用户';
@@ -936,26 +1075,16 @@
 
                         if (res.ok) {
                             const data = await res.json();
-
-                            // Add agent responses if any
-                            if (data.responses && data.responses.length > 0) {
-                                for (const resp of data.responses) {
-                                    messages.value.push({
-                                        type: 'agent',
-                                        sender: resp.agent,
-                                        content: resp.response,
-                                        role: '回复@提及'
-                                    });
-                                }
-                                scrollToBottom();
-                            }
-
+                            // Agent responses are handled via WebSocket 'agent_message' event
                             fetchStatistics();
                         } else {
+                            const errData = await res.json().catch(() => ({}));
                             console.error('Failed to send message:', res.status);
+                            alert(errData.detail || '发送失败，请确保会话已启动');
                         }
                     } catch (e) {
                         console.error('Failed to send mention:', e);
+                        alert('发送出错，请检查网络或服务器状态');
                     }
                 };
 
@@ -993,31 +1122,43 @@
                 });
 
                 // Export summary to MD file
+                // Export/View Summary Report
                 const exportSummaryMD = () => {
+                    console.log("Export button clicked");
+                    const summaryMsg = messages.value.find(m => m.type === 'summary');
+                    if (!summaryMsg) {
+                        alert('报告尚未生成，请稍候...');
+                        return;
+                    }
+                    console.log("Summary found, opening modal");
+                    reportContent.value = summaryMsg.content;
+                    showReportModal.value = true;
+
+                    // Auto-download as fallback
+                    const dateStr = new Date().toISOString().slice(0, 10);
+                    downloadFile(summaryMsg.content, `innovation_report_${dateStr}.md`, 'text/markdown');
+
+                    console.log("Modal state set to true and download triggered");
+                };
+
+                const printReport = () => {
+                    window.print();
+                };
+
+                const downloadMarkdown = () => {
                     const summaryMsg = messages.value.find(m => m.type === 'summary');
                     if (!summaryMsg) return;
 
                     const now = new Date();
                     const dateStr = now.toISOString().slice(0, 10);
 
-                    let mdContent = `# 头脑风暴创新方案报告\n\n`;
-                    mdContent += `**主题**: ${topic.value}\n`;
-                    mdContent += `**生成时间**: ${now.toLocaleString('zh-CN')}\n`;
-                    mdContent += `**参与专家**: ${agents.value.map(a => a.name).join(', ')}\n\n`;
-                    mdContent += `---\n\n`;
-                    mdContent += summaryMsg.content;
-                    mdContent += `\n\n---\n\n## 讨论回顾\n\n`;
+                    let content = `# ${topic.value} - 创新方案白皮书\n\n`;
+                    content += `> 生成时间: ${now.toLocaleString()}\n`;
+                    content += `> 参与专家: ${agents.value.map(a => a.name).join(', ')}\n\n`;
+                    content += `***\n\n`;
+                    content += summaryMsg.content;
 
-                    // Add discussion history
-                    for (const msg of messages.value) {
-                        if (msg.type === 'facilitator') {
-                            mdContent += `### 🎙️ 主持人\n${msg.content}\n\n`;
-                        } else if (msg.type === 'agent') {
-                            mdContent += `### 👤 ${msg.sender} (${msg.role})\n${msg.content}\n\n`;
-                        }
-                    }
-
-                    downloadFile(mdContent, `brainstorm_${dateStr}.md`, 'text/markdown');
+                    downloadFile(content, `innovation_report_${dateStr}.md`, 'text/markdown');
                 };
 
                 // Export knowledge graph to Mermaid MD
@@ -1086,6 +1227,50 @@
                     downloadFile(mdContent, `knowledge_graph_${dateStr}.md`, 'text/markdown');
                 };
 
+                // Export graph as PNG
+                const exportGraphImage = async () => {
+                    const graphEl = document.getElementById('graph');
+                    if (!graphEl) return;
+
+                    try {
+                        const canvas = await html2canvas(graphEl, {
+                            backgroundColor: '#0f172a', // Dark theme background
+                            logging: false
+                        });
+
+                        const link = document.createElement('a');
+                        const dateStr = new Date().toISOString().slice(0, 10);
+                        link.download = `knowledge_graph_${dateStr}.png`;
+                        link.href = canvas.toDataURL();
+                        link.click();
+                    } catch (e) {
+                        console.error("Failed to export image:", e);
+                        alert("导出图片失败，请重试");
+                    }
+                };
+
+                // Export Full Chat Log
+                const exportFullChat = () => {
+                    if (messages.value.length === 0) {
+                        alert("暂无对话记录");
+                        return;
+                    }
+
+                    let content = `# Brainstorming Session Log: ${topic.value || 'Untitled'}\n`;
+                    content += `Date: ${new Date().toLocaleString()}\n\n`;
+                    content += `---\n\n`;
+
+                    messages.value.forEach(msg => {
+                        const sender = msg.sender || "System";
+                        const text = msg.content || "";
+                        content += `### ${sender}\n${text}\n\n`;
+                        content += `---\n\n`;
+                    });
+
+                    const dateStr = new Date().toISOString().slice(0, 10);
+                    downloadFile(content, `session_log_${dateStr}.md`, 'text/markdown');
+                };
+
                 // Helper function to download file
                 const downloadFile = (content, filename, mimeType) => {
                     const blob = new Blob([content], { type: mimeType + ';charset=utf-8' });
@@ -1099,19 +1284,42 @@
                     URL.revokeObjectURL(url);
                 };
 
+                const fetchModels = async () => {
+                    try {
+                        const res = await fetch('/models');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.models && data.models.length > 0) {
+                                availableModels.value = data.models;
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Failed to fetch models:", e);
+                    }
+                };
+
+                onMounted(() => {
+                    fetchModels();
+                });
+
                 return {
                     sessionActive, loading, topic, messages, typingAgent,
                     currentPhase, phaseName, phaseEmoji, completedPhases,
                     activeAgents, graphData, showPresetModal, phases,
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
                     statistics, onlineUsers, userName, userMessage,
+                    showReportModal, reportContent, availableModels,
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
-                    renderMarkdown, exportSummaryMD, exportGraphMermaid,
-                    fetchStatistics, sendMentionMessage, fetchOnlineUsers
+                    renderMarkdown, exportSummaryMD, exportGraphMermaid, exportGraphImage, exportFullChat,
+                    fetchStatistics, sendMentionMessage, fetchOnlineUsers,
+                    printReport, downloadMarkdown
                 };
             }
-        }).mount('#app');
+        });
+
+        const vm = app.mount('#app');
+        window.vm = vm;
     </script>
 </body>
 

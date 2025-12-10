@@ -130,7 +130,7 @@ PHASE_CONFIG = {
 class Facilitator:
     """协作主持人"""
     
-    def __init__(self, llm_client, model_name: str = "gpt-5.1", custom_rounds: Dict[str, int] = None):
+    def __init__(self, llm_client, model_name: str = "grok-4.1-fast", custom_rounds: Dict[str, int] = None):
         self.llm_client = llm_client
         self.model_name = model_name
         self.current_phase = BrainstormPhase.OPENING
@@ -159,7 +159,8 @@ class Facilitator:
         response = self.llm_client.get_completion(
             system_prompt=self.get_system_prompt(),
             user_prompt=user_prompt,
-            model=self.model_name
+            model=self.model_name,
+            timeout=120.0
         )
         return response
     
@@ -189,47 +190,50 @@ class Facilitator:
     
     def generate_final_summary(self, topic: str, history: List[dict]) -> str:
         """生成最终方案总结"""
-        history_text = "\n".join([f"{h['sender']}: {h['content']}" for h in history[-50:]])
+        # Filter and summarize history
+        relevant_msgs = [h for h in history if h.get('type') == 'agent' or h.get('role') in ['facilitator', 'summary']]
+        history_text = "\n".join([f"【{h['sender']} ({h.get('role', 'unknown')})】: {h['content']}" for h in relevant_msgs[-80:]])
         
-        prompt = f"""请基于以下头脑风暴讨论，生成一份完整的创新方案报告。
-
-【讨论主题】{topic}
-
-【讨论记录】
+        prompt = f"""请基于以上头脑风暴讨论记录，以资深咨询顾问的身份，为主题《{topic}》撰写一份专业的创新方案可行性报告。
+    
+【讨论记录摘要】
 {history_text}
 
 【报告要求】
-请生成一份结构化的创新方案报告，包括：
+请生成一份结构清晰、内容详实的Markdown格式报告，必须包含以下章节：
 
-## 📌 项目概述
-简述项目背景和目标
+# 🚀 《{topic}》创新方案白皮书
 
-## 🎯 核心创新点
-列出3-5个关键创新方向
+## 1. 执行摘要 (Executive Summary)
+- 用一段话概括本次讨论的核心成果和最终推荐方向。
 
-## 💡 详细方案
-针对每个创新点，说明：
-- 具体实现思路
-- 技术路径
-- 预期效果
+## 2. 核心创新方案 (Key Innovations)
+请详细阐述2-3个最核心的创新点。对于每个创新点：
+- **方案描述**: 具体是什么？
+- **价值主张**: 解决了什么痛点？创造了什么价值？
+- **技术/实现路径**: 如何落地？(结合专家意见)
 
-## ⚠️ 风险与挑战
-- 技术风险
-- 市场风险
-- 资源需求
+## 3. 多维评估 (Multidimensional Assessment)
+- **可行性分析**: 技术成熟度、实施难度
+- **商业潜力**: 市场机会、预期收益
+- **风险预警**: 潜在的技术、市场或合规风险
 
-## 📋 行动计划
-- 短期（1-3个月）
-- 中期（3-6个月）
-- 长期（6-12个月）
+## 4. 落地路线图 (Implementation Roadmap)
+- **短期 (1-3个月)**: 原型验证、MVP开发...
+- **中期 (3-6个月)**: 试点运行、功能迭代...
+- **长期 (6-12个月)**: 全面推广、生态构建...
 
-## 🏁 结论
-总结性陈述
+## 5. 结论与建议 (Conclusion)
 
-请用中文生成报告："""
+注意：
+- 引用讨论中专家的具体观点来支持你的论述。
+- 保持专业、客观且富有洞察力的语气。
+- 适当使用emoji增加可读性。
+"""
 
         return self.llm_client.get_completion(
-            system_prompt="你是专业的创新方案报告撰写专家。",
+            system_prompt="你是世界顶级的战略咨询顾问和方案架构师，擅长将发散的头脑风暴内容整理成逻辑严密、可落地的专业报告。",
             user_prompt=prompt,
-            model=self.model_name
+            model=self.model_name,
+            timeout=120.0
         )

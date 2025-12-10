@@ -82,7 +82,7 @@ class BrainstormingSession:
         self.summary = self.llm_client.get_completion(
             system_prompt=system_prompt,
             user_prompt=summary_prompt,
-            model="gpt-5.1"  # Use a powerful model for summary
+            model="gemini-3-pro-preview"  # Use a powerful model for summary
         )
         
         return self.summary
