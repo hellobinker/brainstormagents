@@ -9,8 +9,12 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/force-graph"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -76,6 +80,21 @@
 
         .agent-msg {
             background: rgba(255, 255, 255, 0.1);
+            min-height: auto;
+            height: auto;
+        }
+
+        .facilitator-msg {
+            min-height: auto;
+            height: auto;
+        }
+
+        .agent-msg .markdown-content,
+        .facilitator-msg .markdown-content,
+        .human-msg .markdown-content {
+            min-height: auto;
+            height: auto;
+            max-height: none;
         }
 
         .summary-section {
@@ -141,6 +160,14 @@
         .markdown-content p {
             margin: 0.4rem 0;
             line-height: 1.6;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .markdown-content {
+            max-width: 100%;
+            overflow-wrap: break-word;
         }
 
         .markdown-content ul,
@@ -243,6 +270,92 @@
             border-radius: 8px;
             margin: 0.5rem 0;
         }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            body {
+                font-size: 14px;
+            }
+
+            .glass-card {
+                border-radius: 12px;
+            }
+
+            /* Stack layout vertically on mobile */
+            #app>div {
+                flex-direction: column !important;
+            }
+
+            /* Full width panels on mobile */
+            .w-80,
+            .w-96 {
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+
+            /* Adjust chat area for mobile */
+            .flex-1 {
+                min-height: 60vh;
+            }
+
+            /* Hide graph on very small screens, show as collapsible */
+            @media (max-width: 640px) {
+                .graph-container {
+                    max-height: 300px;
+                }
+            }
+        }
+
+        /* Smooth scroll for chat */
+        .chat-messages {
+            scroll-behavior: smooth;
+        }
+
+        /* Code block styling for highlight.js */
+        .markdown-content pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.8rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 0.5rem 0;
+            max-width: 100%;
+        }
+
+        .markdown-content pre code {
+            display: block;
+            padding: 0;
+            overflow-x: auto;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            white-space: pre;
+            word-wrap: normal;
+        }
+
+        /* Ensure tables don't overflow */
+        .markdown-content table {
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+            width: 100%;
+            display: block;
+            overflow-x: auto;
+        }
+
+        /* Typing animation enhancement */
+        @keyframes typewriter {
+            from {
+                width: 0;
+            }
+
+            to {
+                width: 100%;
+            }
+        }
+
+        .typewriter-text {
+            overflow: hidden;
+            white-space: nowrap;
+        }
     </style>
 </head>
 
@@ -272,73 +385,373 @@
         </header>
 
         <!-- Main Content -->
-        <div class="flex-1 flex overflow-hidden p-4 gap-4">
+        <div class="flex-1 flex flex-col md:flex-row overflow-hidden p-2 md:p-4 gap-2 md:gap-4">
             <!-- Left Panel: Config & Agents -->
-            <div class="w-80 glass-card rounded-xl p-4 overflow-y-auto shrink-0">
+            <div
+                class="w-full md:w-80 glass-card rounded-xl p-3 md:p-4 overflow-y-auto shrink-0 max-h-[50vh] md:max-h-none">
                 <div v-if="!sessionActive">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <span>⚙️</span> 会话配置
-                    </h2>
-
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-300 mb-1">讨论主题</label>
-                        <textarea v-model="topic" rows="2"
-                            class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
-                            placeholder="输入讨论主题..."></textarea>
+                    <!-- Tabs -->
+                    <div class="flex gap-2 mb-4 bg-white/5 p-1 rounded-lg">
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'config' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'config'">
+                            <span>⚙️</span> 头脑风暴
+                        </button>
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'solver' ? 'bg-green-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'solver'">
+                            <span>🔧</span> 问题求解
+                        </button>
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'history' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'history'; fetchSessions()">
+                            <span>📜</span> 历史
+                        </button>
                     </div>
 
-                    <h3 class="text-md font-medium mb-2 flex items-center gap-2">
-                        <span>👥</span> 参与专家 ({{ agents.length }})
-                    </h3>
+                    <!-- Config Tab -->
+                    <div v-show="currentTab === 'config'">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <span>⚙️</span> 会话配置
+                        </h2>
 
-                    <div class="space-y-2 max-h-60 overflow-y-auto mb-4">
-                        <div v-for="(agent, index) in agents" :key="index" class="glass-card rounded-lg p-2 text-sm">
-                            <div class="flex justify-between items-center">
-                                <span class="font-medium">{{ agent.name }}</span>
-                                <button @click="removeAgent(index)" class="text-red-400 hover:text-red-300">✕</button>
-                            </div>
-                            <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
-                            <select v-model="agent.model_name"
-                                class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
-                                <option v-for="model in availableModels" :key="model" :value="model">
-                                    {{ model }}
-                                </option>
-                            </select>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">讨论主题</label>
+                            <textarea v-model="topic" rows="2"
+                                class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
+                                placeholder="输入讨论主题..."></textarea>
                         </div>
-                    </div>
 
-                    <button @click="showPresetModal = true"
-                        class="w-full py-2 glass-card rounded-lg hover:bg-white/10 mb-4 text-sm">
-                        ➕ 添加专家
-                    </button>
-
-                    <!-- Phase Rounds Configuration -->
-                    <div class="mb-4">
-                        <h3 class="text-md font-medium mb-2 flex items-center gap-2">
-                            <span>🔄</span> 阶段轮数配置
-                        </h3>
-                        <div class="space-y-2 text-sm">
-                            <template v-for="phase in phases" :key="phase.id">
-                                <div v-if="phase.defaultRounds > 0"
-                                    class="flex items-center justify-between p-2 glass-card rounded">
-                                    <span>{{ phase.emoji }} {{ phase.name }}</span>
-                                    <div class="flex items-center gap-2">
-                                        <button @click="decreaseRounds(phase.id)"
-                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">-</button>
-                                        <span class="w-6 text-center">{{ phaseRounds[phase.id] || phase.defaultRounds
-                                            }}</span>
-                                        <button @click="increaseRounds(phase.id)"
-                                            class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">+</button>
+                        <!-- 头脑风暴附件上传 -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">📎 参考资料（可选）</label>
+                            <div class="border-2 border-dashed border-white/20 rounded-lg p-3 text-center hover:border-white/40 transition cursor-pointer text-sm"
+                                @click="$refs.brainstormFileInput.click()" @dragover.prevent
+                                @drop.prevent="handleBrainstormFileDrop">
+                                <input type="file" ref="brainstormFileInput" class="hidden"
+                                    accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp" multiple
+                                    @change="handleBrainstormFileSelect">
+                                <div v-if="brainstormAttachments.length === 0">
+                                    <span class="text-gray-400">拖拽或点击上传</span>
+                                    <div class="text-xs text-gray-500 mt-1">支持 MD/TXT/PDF 和图片</div>
+                                </div>
+                                <div v-else class="space-y-1 text-left">
+                                    <div v-for="(file, i) in brainstormAttachments" :key="i"
+                                        class="flex items-center justify-between bg-white/10 rounded p-1 text-xs">
+                                        <span>
+                                            {{ file.file_type === 'image' ? '🖼️' : '📄' }}
+                                            {{ file.filename }}
+                                        </span>
+                                        <button @click.stop="removeBrainstormAttachment(i)"
+                                            class="text-red-400 hover:text-red-300">✕</button>
                                     </div>
                                 </div>
-                            </template>
+                            </div>
+                            <div v-if="brainstormUploadError" class="text-red-400 text-xs mt-1">{{ brainstormUploadError
+                                }}</div>
+                        </div>
+
+                        <h3 class="text-md font-medium mb-2 flex items-center gap-2">
+                            <span>👥</span> 参与专家 ({{ agents.length }})
+                        </h3>
+
+                        <div class="space-y-2 max-h-60 overflow-y-auto mb-4">
+                            <div v-for="(agent, index) in agents" :key="index"
+                                class="glass-card rounded-lg p-2 text-sm">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-medium">{{ agent.name }}</span>
+                                    <button @click="removeAgent(index)"
+                                        class="text-red-400 hover:text-red-300">✕</button>
+                                </div>
+                                <div class="text-xs text-gray-400 mt-1">{{ agent.role }}</div>
+                                <select v-model="agent.model_name"
+                                    class="w-full bg-white/10 border border-white/20 rounded p-1 text-xs mt-1">
+                                    <option v-for="model in availableModels" :key="model" :value="model">
+                                        {{ model }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button @click="showPresetModal = true"
+                            class="w-full py-2 glass-card rounded-lg hover:bg-white/10 mb-4 text-sm">
+                            ➕ 添加专家
+                        </button>
+
+                        <!-- Phase Rounds Configuration -->
+                        <div class="mb-4">
+                            <h3 class="text-md font-medium mb-2 flex items-center gap-2">
+                                <span>🔄</span> 阶段轮数配置
+                            </h3>
+                            <div class="space-y-2 text-sm">
+                                <template v-for="phase in phases" :key="phase.id">
+                                    <div v-if="phase.defaultRounds > 0"
+                                        class="flex items-center justify-between p-2 glass-card rounded">
+                                        <span>{{ phase.emoji }} {{ phase.name }}</span>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="decreaseRounds(phase.id)"
+                                                class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">-</button>
+                                            <span class="w-6 text-center">{{ phaseRounds[phase.id] ||
+                                                phase.defaultRounds
+                                                }}</span>
+                                            <button @click="increaseRounds(phase.id)"
+                                                class="w-6 h-6 bg-white/10 rounded hover:bg-white/20">+</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <button @click="startFullSession" :disabled="loading || agents.length === 0"
+                            class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
+                            🚀 启动头脑风暴
+                        </button>
+                    </div>
+
+                    <!-- History Tab -->
+                    <div v-show="currentTab === 'history'">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-lg font-semibold flex items-center gap-2">
+                                <span>📜</span> 历史会话
+                            </h2>
+                            <button @click="fetchSessions"
+                                class="text-xs bg-white/10 px-2 py-1 rounded hover:bg-white/20">🔄 刷新</button>
+                        </div>
+
+                        <div v-if="pastSessions.length === 0" class="text-center text-gray-500 py-10">
+                            暂无历史记录
+                        </div>
+
+                        <div class="space-y-3 max-h-[70vh] overflow-y-auto">
+                            <div v-for="session in pastSessions" :key="session.id"
+                                @click="loadSessionHistory(session.id)"
+                                class="glass-card p-3 rounded-lg cursor-pointer hover:bg-white/10 transition active:scale-95 group">
+                                <div class="font-medium mb-1 line-clamp-2 group-hover:text-blue-300 transition-colors">
+                                    {{ session.topic }}</div>
+                                <div class="flex justify-between text-xs text-gray-400">
+                                    <span>🧠 {{ session.agent_count }} 专家</span>
+                                    <span>{{ new Date(session.created_at).toLocaleString() }}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <button @click="startFullSession" :disabled="loading || agents.length === 0"
-                        class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
-                        🚀 启动头脑风暴
-                    </button>
+                    <!-- Problem Solver Tab -->
+                    <div v-show="currentTab === 'solver'">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <span>🔧</span> 技术问题求解
+                        </h2>
+
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">问题描述</label>
+                            <textarea v-model="solverProblem" rows="4"
+                                class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
+                                placeholder="详细描述您的技术问题...&#10;例如：空调室外机在高温环境下散热效率下降，同时噪音增大，如何优化？"></textarea>
+                        </div>
+
+                        <!-- 文件上传区域 -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">📎 附件（可选）</label>
+                            <div class="border-2 border-dashed border-white/20 rounded-lg p-4 text-center hover:border-white/40 transition cursor-pointer"
+                                @click="$refs.fileInput.click()" @dragover.prevent @drop.prevent="handleFileDrop">
+                                <input type="file" ref="fileInput" class="hidden"
+                                    accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp" multiple @change="handleFileSelect">
+                                <div v-if="solverAttachments.length === 0">
+                                    <span class="text-gray-400">拖拽文件或点击上传</span>
+                                    <div class="text-xs text-gray-500 mt-1">支持 MD/TXT/PDF 文档和 PNG/JPG/WEBP 图片</div>
+                                </div>
+                                <div v-else class="space-y-2">
+                                    <div v-for="(file, i) in solverAttachments" :key="i"
+                                        class="flex items-center justify-between bg-white/10 rounded p-2 text-sm">
+                                        <span>
+                                            {{ file.file_type === 'image' ? '🖼️' : '📄' }}
+                                            {{ file.filename }}
+                                            <span class="text-xs text-gray-400">({{ (file.size_bytes / 1024).toFixed(1)
+                                                }}KB)</span>
+                                        </span>
+                                        <button @click.stop="removeAttachment(i)"
+                                            class="text-red-400 hover:text-red-300">✕</button>
+                                    </div>
+                                    <div class="text-xs text-gray-500">点击添加更多文件</div>
+                                </div>
+                            </div>
+                            <div v-if="uploadError" class="text-red-400 text-xs mt-1">{{ uploadError }}</div>
+                        </div>
+
+                        <!-- Expert Selection Mode -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">专家选择方式</label>
+                            <div class="flex gap-2 mb-2">
+                                <button @click="solverExpertMode = 'auto'"
+                                    :class="['flex-1 py-2 text-xs rounded-lg transition', 
+                                             solverExpertMode === 'auto' ? 'bg-green-600' : 'bg-white/10 hover:bg-white/20']">
+                                    🤖 自动匹配
+                                </button>
+                                <button @click="solverExpertMode = 'manual'"
+                                    :class="['flex-1 py-2 text-xs rounded-lg transition', 
+                                             solverExpertMode === 'manual' ? 'bg-green-600' : 'bg-white/10 hover:bg-white/20']">
+                                    ✋ 手动选择
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Expert Selection -->
+                        <div v-if="solverExpertMode === 'manual'" class="mb-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-sm text-gray-300">已选专家 ({{ solverSelectedExperts.length }})</span>
+                                <button @click="showSolverExpertModal = true"
+                                    class="text-xs bg-white/10 px-2 py-1 rounded hover:bg-white/20">➕ 添加</button>
+                            </div>
+                            <div class="flex flex-wrap gap-1">
+                                <span v-for="(idx, i) in solverSelectedExperts" :key="i"
+                                    class="px-2 py-1 bg-green-500/20 rounded text-xs flex items-center gap-1">
+                                    {{ expertPresets[idx]?.name || idx }}
+                                    <button @click="removeSolverExpert(i)"
+                                        class="text-red-400 hover:text-red-300">✕</button>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Max Experts -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">最大专家数</label>
+                            <div class="flex items-center gap-2">
+                                <button @click="solverMaxExperts = Math.max(1, solverMaxExperts - 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">-</button>
+                                <span class="w-8 text-center">{{ solverMaxExperts }}</span>
+                                <button @click="solverMaxExperts = Math.min(10, solverMaxExperts + 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">+</button>
+                            </div>
+                        </div>
+
+                        <!-- Iteration Rounds -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">迭代轮数</label>
+                            <div class="flex items-center gap-2">
+                                <button @click="solverIterationRounds = Math.max(1, solverIterationRounds - 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">-</button>
+                                <span class="w-8 text-center">{{ solverIterationRounds }}</span>
+                                <button @click="solverIterationRounds = Math.min(5, solverIterationRounds + 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">+</button>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                {{ solverIterationRounds === 1 ? '无迭代' : `${solverIterationRounds - 1}次反思优化` }}
+                            </div>
+                        </div>
+
+                        <!-- 高级选项折叠 -->
+                        <div class="mb-4">
+                            <button @click="showAdvancedOptions = !showAdvancedOptions"
+                                class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                                {{ showAdvancedOptions ? '▼' : '▶' }} 高级选项
+                            </button>
+
+                            <div v-if="showAdvancedOptions" class="mt-3 space-y-3 p-3 bg-white/5 rounded-lg">
+                                <!-- 动态专家生成 -->
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm text-gray-300">🧠 动态专家生成</label>
+                                    <button @click="solverDynamicExperts = !solverDynamicExperts"
+                                        :class="['w-12 h-6 rounded-full transition', solverDynamicExperts ? 'bg-green-500' : 'bg-gray-600']">
+                                        <span
+                                            :class="['block w-5 h-5 bg-white rounded-full transition transform', solverDynamicExperts ? 'translate-x-6' : 'translate-x-1']"></span>
+                                    </button>
+                                </div>
+
+                                <!-- 协作模式 -->
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">🤝 协作模式</label>
+                                    <select v-model="solverCollabMode"
+                                        class="w-full bg-white/10 border border-white/20 rounded p-1.5 text-sm">
+                                        <option value="parallel">⚡ 并行求解</option>
+                                        <option value="sequential">🔗 串行接力</option>
+                                        <option value="hierarchical">📊 分层决策</option>
+                                        <option value="debate">⚔️ 对抗辩论</option>
+                                    </select>
+                                </div>
+
+                                <!-- 自适应迭代 -->
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm text-gray-300">🔄 自适应迭代</label>
+                                    <button @click="solverAdaptiveIteration = !solverAdaptiveIteration"
+                                        :class="['w-12 h-6 rounded-full transition', solverAdaptiveIteration ? 'bg-green-500' : 'bg-gray-600']">
+                                        <span
+                                            :class="['block w-5 h-5 bg-white rounded-full transition transform', solverAdaptiveIteration ? 'translate-x-6' : 'translate-x-1']"></span>
+                                    </button>
+                                </div>
+                                <div v-if="solverAdaptiveIteration" class="text-xs text-gray-400">
+                                    根据专家共识度自动决定是否继续迭代
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Solve Button -->
+                        <button @click="startSolveProblem" :disabled="solverLoading || !solverProblem.trim()"
+                            class="w-full py-3 bg-gradient-to-r from-green-500 to-teal-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
+                            {{ solverLoading ? '🔄 求解中...' : '🚀 开始求解' }}
+                        </button>
+
+                        <!-- Solver Progress -->
+                        <div v-if="solverStages.length > 0" class="mt-4 space-y-2">
+                            <div class="text-sm font-medium text-gray-300">求解进度</div>
+                            <div v-for="(stage, i) in solverStages" :key="i" class="text-xs p-2 rounded bg-white/5">
+                                <span v-if="stage.stage === 'analyzing'" class="text-yellow-400">🔍 {{ stage.message
+                                    }}</span>
+                                <span v-else-if="stage.stage === 'analyzed'" class="text-blue-400">
+                                    ✅ 识别领域: {{ stage.data?.domains?.join(', ') }}
+                                </span>
+                                <span v-else-if="stage.stage === 'matched'" class="text-green-400">
+                                    👥 匹配专家: {{ stage.data?.experts?.map(e => e.name).join(', ') }}
+                                </span>
+                                <span v-else-if="stage.stage === 'expert_done'" class="text-purple-400">
+                                    💬 {{ stage.expert }}: {{ stage.solution?.substring(0, 50) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'reflection_start'" class="text-orange-400">
+                                    🔄 {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'reflection'" class="text-orange-300">
+                                    💭 反思: {{ stage.feedback?.substring(0, 80) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'improvement'" class="text-cyan-400">
+                                    ⬆️ {{ stage.expert }} 优化中...
+                                </span>
+                                <span v-else-if="stage.stage === 'validation'" class="text-pink-400">
+                                    ✓ 验证: {{ stage.result?.solved }} / 可行性{{ stage.result?.feasibility }}
+                                </span>
+                                <span v-else-if="stage.stage === 'discussion_start'" class="text-blue-400">
+                                    💬 {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'discussion'" class="text-blue-300">
+                                    🗣️ {{ stage.expert }} 讨论中...
+                                </span>
+                                <span v-else-if="stage.stage === 'critique_start'" class="text-red-400">
+                                    ⚔️ {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'critique'" class="text-red-300">
+                                    📝 批评: {{ stage.critique?.substring(0, 60) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'critique_response'" class="text-green-300">
+                                    🛡️ {{ stage.expert }} 回应中...
+                                </span>
+                                <span v-else-if="stage.stage === 'evaluation'" class="text-yellow-400">
+                                    📊 评估: {{ stage.data?.overall_score }}/100
+                                </span>
+                                <span v-else-if="stage.stage === 'expert_solving'" class="text-purple-300">
+                                    ⏳ {{ stage.expert }} 分析中...
+                                </span>
+                                <span v-else-if="stage.stage === 'reasoning_graph'" class="text-indigo-400">
+                                    🧠 推理链已生成
+                                </span>
+                                <span v-else-if="stage.stage === 'complete'" class="text-green-400 font-medium">
+                                    ✅ 完成! ({{ (stage.data?.total_duration_ms / 1000).toFixed(1) }}秒, {{
+                                    stage.data?.iteration_rounds || 1 }}轮)
+                                </span>
+                                <span v-else>{{ stage.message || stage.stage }}</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div v-else>
@@ -390,6 +803,10 @@
                                 class="w-full py-2 bg-purple-500/80 hover:bg-purple-500 disabled:opacity-40 rounded-lg font-medium transition">
                                 🔮 导出图谱(Mermaid)
                             </button>
+                            <button @click="exportMindMap" :disabled="graphData.nodes.length === 0"
+                                class="w-full mt-2 py-2 bg-indigo-500/80 hover:bg-indigo-500 disabled:opacity-40 rounded-lg font-medium transition">
+                                🧠 导出思维导图
+                            </button>
                             <button @click="exportGraphImage" :disabled="graphData.nodes.length === 0"
                                 class="w-full mt-2 py-2 bg-pink-600/80 hover:bg-pink-600 disabled:opacity-40 rounded-lg font-medium transition flex items-center justify-center">
                                 <span class="mr-2">📸</span> 导出图谱(PNG)
@@ -404,7 +821,7 @@
             </div>
 
             <!-- Middle Panel: Chat -->
-            <div class="flex-1 glass-card rounded-xl flex flex-col overflow-hidden">
+            <div class="flex-1 glass-card rounded-xl flex flex-col">
                 <div class="p-4 border-b border-white/10">
                     <h2 class="font-semibold">💬 讨论区</h2>
                     <p class="text-sm text-gray-400">{{ topic || '等待会议开始...' }}</p>
@@ -413,7 +830,8 @@
                 <div class="flex-1 overflow-y-auto p-4 space-y-3" id="chat-container">
                     <div v-for="(msg, idx) in messages" :key="idx" class="message-enter">
                         <!-- Facilitator Message -->
-                        <div v-if="msg.type === 'facilitator'" class="facilitator-msg rounded-xl p-4 max-w-2xl">
+                        <div v-if="msg.type === 'facilitator'"
+                            class="facilitator-msg rounded-xl p-4 max-w-full md:max-w-4xl">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">🎙️</span>
                                 <span class="font-bold">主持人</span>
@@ -421,7 +839,8 @@
                             </div>
                             <div class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
                         </div>
-                        <div v-if="msg.type === 'agent'" class="agent-msg rounded-xl p-4 max-w-2xl ml-8">
+                        <div v-if="msg.type === 'agent'"
+                            class="agent-msg rounded-xl p-4 max-w-full md:max-w-4xl ml-0 md:ml-8">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-lg">👤</span>
                                 <span class="font-bold">{{ msg.sender }}</span>
@@ -433,7 +852,7 @@
                                 v-html="renderMarkdown(msg.content)"></div>
                         </div>
                         <div v-if="msg.type === 'human'"
-                            class="human-msg rounded-xl p-4 max-w-2xl ml-auto bg-blue-600/30 border border-blue-500/50">
+                            class="human-msg rounded-xl p-4 max-w-full md:max-w-3xl ml-auto bg-blue-600/30 border border-blue-500/50">
                             <div class="flex items-center gap-2 mb-2 justify-end">
                                 <span class="font-bold">{{ msg.sender }}</span>
                                 <span class="text-lg">🗣️</span>
@@ -455,7 +874,8 @@
                     </div>
 
                     <!-- Typing Indicator -->
-                    <div v-if="typingAgent" class="agent-msg rounded-xl p-4 max-w-2xl ml-8 opacity-70">
+                    <div v-if="typingAgent"
+                        class="agent-msg rounded-xl p-4 max-w-full md:max-w-4xl ml-0 md:ml-8 opacity-70">
                         <div class="flex items-center gap-2">
                             <span class="text-lg">💭</span>
                             <span class="font-medium">{{ typingAgent }}</span>
@@ -466,7 +886,8 @@
             </div>
 
             <!-- Right Panel: Visualization & Stats -->
-            <div class="w-80 glass-card rounded-xl p-4 flex flex-col overflow-y-auto shrink-0">
+            <div
+                class="w-full md:w-80 glass-card rounded-xl p-3 md:p-4 flex flex-col overflow-y-auto shrink-0 max-h-[50vh] md:max-h-none">
                 <!-- Online Users -->
                 <div v-if="onlineUsers.length > 0" class="mb-4">
                     <h2 class="font-semibold mb-2 flex items-center gap-2">
@@ -618,9 +1039,13 @@
 
                     <div
                         class="p-4 border-t border-gray-700 bg-gray-900 rounded-b-lg flex justify-end space-x-4 no-print">
+                        <button @click="downloadPDF"
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors flex items-center">
+                            <span class="mr-2">📄</span> 下载 PDF (专业版)
+                        </button>
                         <button @click="printReport"
                             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center">
-                            <span class="mr-2">🖨️</span> 打印/另存为PDF
+                            <span class="mr-2">🖨️</span> 浏览器打印
                         </button>
                         <button @click="downloadMarkdown"
                             class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors flex items-center">
@@ -671,6 +1096,10 @@
                 const showReportModal = ref(false);
                 const reportContent = ref("");
 
+                // Brainstorm Attachments
+                const brainstormAttachments = ref([]);
+                const brainstormUploadError = ref('');
+
                 // Available API Models
                 const availableModels = ref(["gemini-3-pro-preview", "grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4"]);
 
@@ -683,6 +1112,425 @@
                     { id: "integrate", name: "整合阶段", emoji: "🔗", defaultRounds: 1 },
                     { id: "output", name: "输出方案", emoji: "📋", defaultRounds: 0 }
                 ]);
+
+                // History Management
+                const currentTab = ref('config'); // 'config', 'history', or 'solver'
+                const pastSessions = ref([]);
+
+                // Problem Solver State
+                const solverProblem = ref('');
+                const solverExpertMode = ref('auto'); // 'auto' or 'manual'
+                const solverSelectedExperts = ref([]);
+                const solverMaxExperts = ref(5);
+                const solverIterationRounds = ref(1);  // 迭代轮数
+                // 高级选项
+                const showAdvancedOptions = ref(false);
+                const solverDynamicExperts = ref(false);  // 动态专家生成
+                const solverCollabMode = ref('parallel');  // 协作模式
+                const solverAdaptiveIteration = ref(false);  // 自适应迭代
+                const solverLoading = ref(false);
+                const solverStages = ref([]);
+                const solverResult = ref(null);
+                const solverReasoningGraph = ref(null);  // 推理可视化数据
+                const solverAttachments = ref([]);  // 已上传的附件
+                const uploadError = ref('');  // 上传错误信息
+                const showSolverExpertModal = ref(false);
+
+                const removeSolverExpert = (index) => {
+                    solverSelectedExperts.value.splice(index, 1);
+                };
+
+                const addSolverExpert = (idx) => {
+                    if (!solverSelectedExperts.value.includes(idx)) {
+                        solverSelectedExperts.value.push(idx);
+                    }
+                    showSolverExpertModal.value = false;
+                };
+
+                // 文件上传处理
+                const handleFileSelect = async (event) => {
+                    const files = event.target.files;
+                    if (files) {
+                        await uploadFiles(Array.from(files));
+                    }
+                    event.target.value = '';  // 重置input
+                };
+
+                const handleFileDrop = async (event) => {
+                    const files = event.dataTransfer.files;
+                    if (files) {
+                        await uploadFiles(Array.from(files));
+                    }
+                };
+
+                const uploadFiles = async (files) => {
+                    uploadError.value = '';
+                    for (const file of files) {
+                        try {
+                            const formData = new FormData();
+                            formData.append('file', file);
+
+                            const response = await fetch('/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.detail || '上传失败');
+                            }
+
+                            const result = await response.json();
+                            solverAttachments.value.push(result);
+                        } catch (e) {
+                            uploadError.value = `上传 ${file.name} 失败: ${e.message}`;
+                            console.error('Upload error:', e);
+                        }
+                    }
+                };
+
+                const removeAttachment = (index) => {
+                    solverAttachments.value.splice(index, 1);
+                };
+
+                // 头脑风暴文件上传处理
+                const handleBrainstormFileSelect = async (event) => {
+                    const files = event.target.files;
+                    if (files) {
+                        await uploadBrainstormFiles(Array.from(files));
+                    }
+                    event.target.value = '';
+                };
+
+                const handleBrainstormFileDrop = async (event) => {
+                    const files = event.dataTransfer.files;
+                    if (files) {
+                        await uploadBrainstormFiles(Array.from(files));
+                    }
+                };
+
+                const uploadBrainstormFiles = async (files) => {
+                    brainstormUploadError.value = '';
+                    for (const file of files) {
+                        try {
+                            const formData = new FormData();
+                            formData.append('file', file);
+
+                            const response = await fetch('/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.detail || '上传失败');
+                            }
+
+                            const result = await response.json();
+                            brainstormAttachments.value.push(result);
+                        } catch (e) {
+                            brainstormUploadError.value = `上传 ${file.name} 失败: ${e.message}`;
+                        }
+                    }
+                };
+
+                const removeBrainstormAttachment = (index) => {
+                    brainstormAttachments.value.splice(index, 1);
+                };
+
+                const startSolveProblem = async () => {
+                    if (!solverProblem.value.trim()) return;
+
+                    solverLoading.value = true;
+                    solverStages.value = [];
+                    solverResult.value = null;
+
+                    // Clear previous messages and show solver mode in chat
+                    messages.value = [];
+                    sessionActive.value = true;
+
+                    // Add initial message
+                    messages.value.push({
+                        type: 'facilitator',
+                        sender: '问题求解助手',
+                        content: `🔧 正在分析问题：\n\n> ${solverProblem.value}`,
+                        phase_name: '问题求解'
+                    });
+                    scrollToBottom();
+
+                    try {
+                        // Build request
+                        const requestBody = {
+                            problem: solverProblem.value,
+                            max_experts: solverMaxExperts.value,
+                            iteration_rounds: solverIterationRounds.value,
+                            // 高级选项
+                            dynamic_experts: solverDynamicExperts.value,
+                            collaboration_mode: solverCollabMode.value,
+                            adaptive_iteration: solverAdaptiveIteration.value,
+                            show_reasoning: true,
+                            stream: true
+                        };
+
+                        if (solverExpertMode.value === 'manual' && solverSelectedExperts.value.length > 0) {
+                            requestBody.expert_indices = solverSelectedExperts.value;
+                        }
+
+                        // 添加附件ID
+                        if (solverAttachments.value.length > 0) {
+                            requestBody.attachment_ids = solverAttachments.value.map(a => a.file_id);
+                        }
+
+                        // Start streaming request
+                        const response = await fetch('/solve', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody)
+                        });
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            const text = decoder.decode(value);
+                            const lines = text.split('\n');
+
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    try {
+                                        const event = JSON.parse(line.slice(6));
+                                        solverStages.value.push(event);
+
+                                        // Update chat based on event
+                                        if (event.stage === 'analyzed') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '意图分析',
+                                                content: `**问题类型**: ${event.data.problem_type}\n**涉及领域**: ${event.data.domains.join(', ')}\n**子问题**: \n${event.data.sub_problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
+                                                phase_name: '分析'
+                                            });
+                                        } else if (event.stage === 'matched') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '专家匹配',
+                                                content: `**已匹配专家**:\n${event.data.experts.map(e => `- ${e.name} (${e.role})`).join('\n')}`,
+                                                phase_name: '匹配'
+                                            });
+                                        } else if (event.stage === 'expert_solving') {
+                                            // 显示专家正在分析的状态
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '求解进度',
+                                                content: event.message,
+                                                phase_name: '分析中'
+                                            });
+                                        } else if (event.stage === 'expert_done') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                role: event.role,
+                                                model: event.model || 'unknown',
+                                                phase_name: event.domain || '深度分析',
+                                                content: event.solution
+                                            });
+                                        } else if (event.stage === 'discussion_start') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '讨论主持',
+                                                content: event.message,
+                                                phase_name: '专家讨论'
+                                            });
+                                        } else if (event.stage === 'discussion') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                role: event.role,
+                                                content: `**💬 讨论评论**\n\n${event.comment}`,
+                                                phase_name: '讨论'
+                                            });
+                                        } else if (event.stage === 'critique_start') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '批评审查',
+                                                content: event.message,
+                                                phase_name: '批评辩论'
+                                            });
+                                        } else if (event.stage === 'critique') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '⚔️ 技术批评者',
+                                                content: `**技术批评**\n\n${event.critique}`,
+                                                phase_name: '批评'
+                                            });
+                                        } else if (event.stage === 'critique_response') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                content: `**🛡️ 回应批评**\n\n${event.response}`,
+                                                phase_name: '辩论'
+                                            });
+                                        } else if (event.stage === 'evaluation') {
+                                            const evalData = event.data;
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '📊 综合评估',
+                                                content: `**多维度评估结果**\n\n` +
+                                                    `- **综合评分**: ${evalData.overall_score || 'N/A'}/100\n` +
+                                                    `- **推荐意见**: ${evalData.recommendation || '无'}\n` +
+                                                    (evalData.ranking ? `- **方案排名**: ${evalData.ranking.join(' > ')}` : ''),
+                                                phase_name: '评估'
+                                            });
+                                        } else if (event.stage === 'self_reflection') {
+                                            // 自我反思
+                                            const refData = event.data;
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: `🔍 ${event.expert}`,
+                                                content: `**自我反思**\n\n` +
+                                                    `- **最大风险**: ${refData.biggest_risk || 'N/A'}\n` +
+                                                    `- **信心程度**: ${refData.confidence_level}/10\n` +
+                                                    `- **替代方案**: ${refData.alternative_approach || '无'}`,
+                                                phase_name: '反思'
+                                            });
+                                        } else if (event.stage === 'adversarial_result') {
+                                            // 对抗验证
+                                            const advData = event.data;
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '⚔️ 对抗验证',
+                                                content: `**验证报告**\n\n` +
+                                                    `- **稳健性评分**: ${advData.overall_robustness}/10\n` +
+                                                    `- **判定结果**: ${advData.verdict}\n` +
+                                                    (advData.critical_flaws?.length ? `- **致命缺陷**: ${advData.critical_flaws.join('; ')}` : ''),
+                                                phase_name: '验证'
+                                            });
+                                        } else if (event.stage === 'improvement_suggestion') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '💡 改进建议',
+                                                content: event.content,
+                                                phase_name: '改进'
+                                            });
+                                        } else if (event.stage === 'reasoning_graph') {
+                                            // 推理可视化
+                                            solverReasoningGraph.value = event.data;
+                                            const mermaidCode = event.data?.mermaid || '';
+                                            if (mermaidCode) {
+                                                messages.value.push({
+                                                    type: 'facilitator',
+                                                    sender: '🧠 推理链',
+                                                    content: `**推理可视化**\n\n\`\`\`mermaid\n${mermaidCode}\n\`\`\``,
+                                                    phase_name: '推理'
+                                                });
+                                            }
+                                        } else if (event.stage === 'complete') {
+                                            messages.value.push({
+                                                type: 'summary',
+                                                sender: '综合方案',
+                                                content: event.data.final_solution
+                                            });
+                                            solverResult.value = event.data;
+                                            // 保存推理图
+                                            if (event.data.reasoning_graph) {
+                                                solverReasoningGraph.value = event.data.reasoning_graph;
+                                            }
+                                        }
+
+                                        scrollToBottom();
+                                    } catch (e) {
+                                        // Skip invalid JSON
+                                    }
+                                }
+                            }
+                        }
+
+                    } catch (error) {
+                        console.error('Solve error:', error);
+                        messages.value.push({
+                            type: 'facilitator',
+                            sender: '系统',
+                            content: `❌ 求解失败: ${error.message}`,
+                            phase_name: '错误'
+                        });
+                    } finally {
+                        solverLoading.value = false;
+                    }
+                };
+
+                const fetchSessions = async () => {
+                    try {
+                        const res = await fetch('/sessions');
+                        const data = await res.json();
+                        pastSessions.value = data.sessions;
+                    } catch (e) {
+                        console.error("Failed to fetch sessions:", e);
+                    }
+                };
+
+                const loadSessionHistory = async (sid) => {
+                    if (sessionActive.value && !confirm("当前有正在进行的会话，确定要切换吗？")) {
+                        return;
+                    }
+
+                    try {
+                        loading.value = true;
+                        const res = await fetch(`/sessions/${sid}/history`);
+                        if (!res.ok) throw new Error("Failed to load history");
+
+                        const data = await res.json();
+
+                        // Update state
+                        topic.value = data.session.topic;
+                        sessionId.value = data.session.id; // Switch ID
+                        currentPhase.value = data.session.current_phase;
+
+                        // Restore agents
+                        agents.value = data.agents.map(a => ({
+                            name: a.name,
+                            role: a.role,
+                            model_name: a.model,
+                            expertise: "", // Not stored efficiently yet
+                            style: "",
+                            personality_traits: []
+                        }));
+
+                        // Restore messages
+                        messages.value = data.history.map(m => ({
+                            sender: m.sender,
+                            content: m.content,
+                            type: m.type,
+                            role: m.role,
+                            model: m.model,
+                            phase_name: m.phase, // Should map back to name if possible, or just use value
+                            streaming: false
+                        }));
+
+                        // Set active but maybe 'read-only' mode? 
+                        // For now just show it.
+                        sessionActive.value = true;
+
+                        // Close sidebar on mobile if needed
+
+                    } catch (e) {
+                        console.error("Error loading history:", e);
+                        alert("加载历史会话失败");
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                // Initial fetch
+                onMounted(() => {
+                    fetchSessions();
+                    fetchModels();
+                    fetchStatistics();
+
+                    // If session ID in URL is not default, try to load it? 
+                    // Or just let user click. 
+                });
 
                 // Phase rounds configuration
                 const phaseRounds = ref({
@@ -817,16 +1665,24 @@
                     completedPhases.value = [];
 
                     try {
+                        // Build request with attachments
+                        const requestBody = {
+                            session_id: sessionId.value,
+                            topic: topic.value,
+                            agents: agents.value,
+                            phase_rounds: phaseRounds.value
+                        };
+
+                        // 添加附件ID
+                        if (brainstormAttachments.value.length > 0) {
+                            requestBody.attachment_ids = brainstormAttachments.value.map(a => a.file_id);
+                        }
+
                         // Start session
                         const startRes = await fetch('/session/start', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                session_id: sessionId.value,
-                                topic: topic.value,
-                                agents: agents.value,
-                                phase_rounds: phaseRounds.value
-                            })
+                            body: JSON.stringify(requestBody)
                         });
 
                         if (!startRes.ok) throw new Error('Failed to start session');
@@ -860,14 +1716,29 @@
                             scrollToBottom();
                         });
 
-                        // Handle streaming message chunks
+                        // Handle streaming message chunks with smooth typewriter effect
                         let streamingMessage = null;
+                        let chunkBuffer = ''; // Buffer to accumulate chunks
+                        let typewriterInterval = null;
 
                         eventSource.addEventListener('message_chunk', (e) => {
                             const data = JSON.parse(e.data);
 
                             // If this is a new streaming message or sender changed, create a new message bubble
                             if (!streamingMessage || streamingMessage.sender !== data.sender) {
+                                // CRITICAL FIX: Flush any remaining buffer to the previous message before switching
+                                if (streamingMessage && chunkBuffer) {
+                                    streamingMessage.content += chunkBuffer;
+                                    chunkBuffer = '';
+                                }
+
+                                // Clear any existing typewriter animation
+                                if (typewriterInterval) {
+                                    clearInterval(typewriterInterval);
+                                    typewriterInterval = null;
+                                }
+                                chunkBuffer = '';
+
                                 const phaseInfo = phases.value.find(p => p.id === data.phase);
                                 const newMsg = {
                                     sender: data.sender,
@@ -886,20 +1757,51 @@
                                 streamingMessage = messages.value[messages.value.length - 1];
                             }
 
-                            // Append the chunk to the streaming message proxy to trigger updates
-                            if (streamingMessage) {
-                                streamingMessage.content += data.chunk;
-                            }
+                            // Add chunk to buffer
+                            chunkBuffer += data.chunk;
 
-                            scrollToBottom();
+                            // Start smooth typewriter if not already running
+                            if (!typewriterInterval && streamingMessage) {
+                                // CAPTURE the current message object locally to prevent null reference errors
+                                // if streamingMessage variable is cleared externally
+                                const targetMessage = streamingMessage;
+
+                                typewriterInterval = setInterval(() => {
+                                    if (chunkBuffer.length > 0) {
+                                        // Speed up typing if buffer gets too large (adaptive speed)
+                                        // If streaming is done (targetMessage.streaming is false), flush faster
+                                        const isComplete = !targetMessage.streaming;
+                                        const charsToTake = (chunkBuffer.length > 50 || isComplete) ? 20 : 3;
+
+                                        const nextChars = chunkBuffer.substring(0, charsToTake);
+                                        targetMessage.content += nextChars;
+                                        chunkBuffer = chunkBuffer.substring(nextChars.length);
+                                        scrollToBottom();
+                                    } else if (!targetMessage.streaming) {
+                                        // Stop ONLY when streaming is done AND buffer is empty
+                                        clearInterval(typewriterInterval);
+                                        typewriterInterval = null;
+                                    }
+                                }, 20);
+                            }
                         });
 
                         eventSource.addEventListener('message_complete', (e) => {
                             const data = JSON.parse(e.data);
 
                             // Mark streaming as complete
+                            // Note: We don't verify strict equality of objects because streamingMessage might be a Proxy
                             if (streamingMessage && streamingMessage.sender === data.sender) {
+                                // Signal to the interval that streaming is done
                                 streamingMessage.streaming = false;
+
+                                // We DO NOT nullify streamingMessage immediately here anymore
+                                // Let the interval clean itself up when buffer is empty
+                                // creating a 'soft landing'
+                            }
+
+                            // Reset sender tracking only
+                            if (streamingMessage && streamingMessage.sender === data.sender) {
                                 streamingMessage = null;
                             }
 
@@ -1002,10 +1904,9 @@
                         await fetch('/session/resume', { method: 'POST' });
                         isPaused.value = false;
                     } else {
-                        if (confirm('确定要暂停当前会话吗？')) {
-                            await fetch('/session/pause', { method: 'POST' });
-                            isPaused.value = true;
-                        }
+                        // Removed confirm dialog to prevent UI blocking/flashing issue
+                        await fetch('/session/pause', { method: 'POST' });
+                        isPaused.value = true;
                     }
                 };
 
@@ -1018,29 +1919,28 @@
                 };
 
                 const resetSession = async () => {
-                    if (confirm('确定要重置会话吗？所有讨论记录将被清除。')) {
-                        if (eventSource) {
-                            eventSource.close();
-                            eventSource = null;
-                        }
-                        if (websocket) {
-                            websocket.close();
-                            websocket = null;
-                        }
-                        await fetch('/session/reset', { method: 'POST' });
-                        await fetch('/statistics/reset', { method: 'POST' });
-                        sessionActive.value = false;
-                        loading.value = false;
-                        messages.value = [];
-                        completedPhases.value = [];
-                        currentPhase.value = null;
-                        graphData.value = { nodes: [], links: [] };
-                        graphInstance = null;
-                        isPaused.value = false;
-                        typingAgent.value = null;
-                        statistics.value = {};
-                        onlineUsers.value = [];
+                    // Removed confirm dialog to fix UI flash issue
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
                     }
+                    if (websocket) {
+                        websocket.close();
+                        websocket = null;
+                    }
+                    await fetch('/session/reset', { method: 'POST' });
+                    await fetch('/statistics/reset', { method: 'POST' });
+                    sessionActive.value = false;
+                    loading.value = false;
+                    messages.value = [];
+                    completedPhases.value = [];
+                    currentPhase.value = null;
+                    graphData.value = { nodes: [], links: [] };
+                    graphInstance = null;
+                    isPaused.value = false;
+                    typingAgent.value = null;
+                    statistics.value = {};
+                    onlineUsers.value = [];
                 };
 
                 // Fetch statistics from server
@@ -1120,12 +2020,40 @@
                     mermaid.initialize({ startOnLoad: false, theme: 'dark' });
                 }
 
-                // Markdown rendering function
+                // Markdown rendering function with syntax highlighting
                 const renderMarkdown = (content) => {
                     if (!content) return '';
                     try {
-                        return marked.parse(content);
+                        // Configure marked with syntax highlighting
+                        marked.setOptions({
+                            highlight: function (code, lang) {
+                                if (lang && hljs.getLanguage(lang)) {
+                                    try {
+                                        return hljs.highlight(code, { language: lang }).value;
+                                    } catch (e) {
+                                        console.error('Highlight error:', e);
+                                    }
+                                }
+                                return hljs.highlightAuto(code).value;
+                            },
+                            breaks: true,
+                            gfm: true
+                        });
+
+                        const html = marked.parse(content);
+
+                        // Apply syntax highlighting to any code blocks that may have been missed
+                        setTimeout(() => {
+                            document.querySelectorAll('pre code').forEach((block) => {
+                                if (!block.classList.contains('hljs')) {
+                                    hljs.highlightElement(block);
+                                }
+                            });
+                        }, 50);
+
+                        return html;
                     } catch (e) {
+                        console.error('Markdown rendering error:', e);
                         return content;
                     }
                 };
@@ -1173,6 +2101,23 @@
                     content += summaryMsg.content;
 
                     downloadFile(content, `innovation_report_${dateStr}.md`, 'text/markdown');
+                };
+
+                const downloadPDF = () => {
+                    const element = document.getElementById('report-content');
+                    if (!element) return;
+
+                    const opt = {
+                        margin: [10, 10, 20, 10], // top, left, bottom, right (mm)
+                        filename: `innovation_report_${new Date().toISOString().slice(0, 10)}.pdf`,
+                        image: { type: 'jpeg', quality: 0.98 },
+                        html2canvas: { scale: 2, useCORS: true },
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+                    };
+
+                    // Add header/footer workaround or just clean export
+                    html2pdf().set(opt).from(element).save();
                 };
 
                 // Export knowledge graph to Mermaid MD
@@ -1241,6 +2186,47 @@
                     downloadFile(mdContent, `knowledge_graph_${dateStr}.md`, 'text/markdown');
                 };
 
+                // Export Mindmap (Mermaid)
+                const exportMindMap = () => {
+                    if (!graphData.value.nodes || graphData.value.nodes.length === 0) {
+                        alert("暂无数据可导出");
+                        return;
+                    }
+
+                    const now = new Date();
+                    const dateStr = now.toISOString().slice(0, 10);
+
+                    let mmCode = 'mindmap\n';
+                    mmCode += `  root((${topic.value || 'Central Topic'}))\n`;
+
+                    // Group 1: Agents
+                    mmCode += `    ::icon(fa fa-users)\n`;
+                    mmCode += `    Agents\n`;
+                    agents.value.forEach(a => {
+                        let name = a.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                        if (name) {
+                            mmCode += `      ${name}\n`;
+                            mmCode += `        ::icon(fa fa-user)\n`;
+                        }
+                    });
+
+                    // Group 2: Key Concepts (from keywords nodes in graph)
+                    mmCode += `    Concepts\n`;
+                    mmCode += `      ::icon(fa fa-lightbulb)\n`;
+
+                    // Filter just keyword nodes
+                    const keywords = graphData.value.nodes.filter(n => n.type === 'keyword').slice(0, 15); // Top 15
+                    keywords.forEach(kw => {
+                        const val = kw.id.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                        if (val) mmCode += `      ${val}\n`;
+                    });
+
+                    let mdContent = `# 头脑风暴思维导图\n\n`;
+                    mdContent += '```mermaid\n' + mmCode + '```\n\n';
+
+                    downloadFile(mdContent, `mindmap_${dateStr}.md`, 'text/markdown');
+                };
+
                 // Export graph as PNG
                 const exportGraphImage = async () => {
                     const graphEl = document.getElementById('graph');
@@ -1287,15 +2273,28 @@
 
                 // Helper function to download file
                 const downloadFile = (content, filename, mimeType) => {
+                    // 确保文件名有正确的后缀
+                    if (!filename.includes('.')) {
+                        const ext = mimeType.includes('markdown') ? '.md' :
+                            mimeType.includes('pdf') ? '.pdf' : '.txt';
+                        filename = filename + ext;
+                    }
+
                     const blob = new Blob([content], { type: mimeType + ';charset=utf-8' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
+                    a.style.display = 'none';
                     a.href = url;
                     a.download = filename;
+                    a.setAttribute('download', filename);  // 双重保险
                     document.body.appendChild(a);
                     a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+
+                    // 延迟清理，确保下载开始
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 100);
                 };
 
                 const fetchModels = async () => {
@@ -1312,10 +2311,6 @@
                     }
                 };
 
-                onMounted(() => {
-                    fetchModels();
-                });
-
                 return {
                     sessionActive, loading, topic, messages, typingAgent,
                     currentPhase, phaseName, phaseEmoji, completedPhases,
@@ -1323,11 +2318,23 @@
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
                     statistics, onlineUsers, userName, userMessage,
                     showReportModal, reportContent, availableModels,
+                    // Brainstorm Attachments
+                    brainstormAttachments, brainstormUploadError,
+                    handleBrainstormFileSelect, handleBrainstormFileDrop, removeBrainstormAttachment,
+                    currentTab, pastSessions, fetchSessions, loadSessionHistory,
+                    // Problem Solver
+                    solverProblem, solverExpertMode, solverSelectedExperts, solverMaxExperts,
+                    solverIterationRounds, showAdvancedOptions, solverDynamicExperts,
+                    solverCollabMode, solverAdaptiveIteration, solverReasoningGraph,
+                    solverAttachments, uploadError, handleFileSelect, handleFileDrop, removeAttachment,
+                    solverLoading, solverStages, solverResult, showSolverExpertModal,
+                    startSolveProblem, removeSolverExpert, addSolverExpert,
+                    // Original functions
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
                     renderMarkdown, exportSummaryMD, exportGraphMermaid, exportGraphImage, exportFullChat,
                     fetchStatistics, sendMentionMessage, fetchOnlineUsers, createNewSession,
-                    printReport, downloadMarkdown
+                    printReport, downloadMarkdown, downloadPDF, exportMindMap
                 };
             }
         });

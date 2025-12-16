@@ -288,6 +288,59 @@ class ParallelDivergence:
         
         return all_ideas
     
+    async def generate_parallel_ideas_async(self, topic: str, agents: List[Any], context: str = "") -> List[Dict]:
+        """
+        真正的并行发散 - 所有 Agent 同时生成想法
+        
+        使用 asyncio.gather 实现真正的并行调用，
+        比顺序调用快 N 倍（N = Agent 数量）
+        
+        使用方法:
+            ideas = await divergence.generate_parallel_ideas_async(topic, agents)
+        """
+        import asyncio
+        
+        prompt_template = """【平行发散模式】
+请独立思考，不要受其他人影响，针对主题提出你的独特想法。
+
+【主题】{topic}
+【你的角色】{role}
+【你的专长】{expertise}
+
+要求：
+1. 从你的专业角度出发
+2. 提出1-2个独特想法
+3. 每个想法简洁明了（50字以内）
+
+请直接列出你的想法："""
+
+        async def generate_for_agent(agent):
+            """单个 Agent 的异步生成任务"""
+            prompt = prompt_template.format(
+                topic=topic,
+                role=agent.role,
+                expertise=agent.expertise
+            )
+            
+            # 使用异步客户端
+            result = await self.llm_client.get_completion_async(
+                system_prompt=agent.get_system_prompt(),
+                user_prompt=prompt,
+                model=agent.model_name
+            )
+            
+            return {
+                "agent": agent.name,
+                "role": agent.role,
+                "ideas": result
+            }
+        
+        # 所有 Agent 并行执行
+        tasks = [generate_for_agent(agent) for agent in agents]
+        results = await asyncio.gather(*tasks)
+        
+        return list(results)
+    
     def deduplicate_and_cluster(self, ideas: List[Dict], topic: str) -> str:
         """去重并聚类想法"""
         ideas_text = "\n".join([f"【{i['agent']}】{i['ideas']}" for i in ideas])
@@ -458,3 +511,65 @@ class DebateMode:
             user_prompt=prompt,
             model="gemini-3-pro-preview"
         )
+    
+    async def run_debate_async(self, idea: str, pro_agents: List[Any], con_agents: List[Any], topic: str) -> Dict:
+        """
+        异步辩论模式 - 正反方并行发言
+        
+        所有 Pro 和 Con Agent 同时生成论点，大幅提升速度
+        """
+        import asyncio
+        
+        async def argue_for_async(agent):
+            prompt = f"""【辩论模式 - 正方】
+你需要为以下想法进行辩护，说明其价值和可行性。
+
+【讨论主题】{topic}
+【待辩护的想法】{idea}
+【你的角色】{agent.role}
+
+请从你的专业角度，列出3个支持这个想法的论点（100字以内）："""
+            
+            result = await self.llm_client.get_completion_async(
+                system_prompt=f"你是辩论赛正方代表，你的角色是{agent.role}，需要有理有据地支持这个想法。",
+                user_prompt=prompt,
+                model=agent.model_name
+            )
+            return {"agent": agent.name, "role": agent.role, "argument": result}
+        
+        async def argue_against_async(agent):
+            prompt = f"""【辩论模式 - 反方】
+你需要对以下想法提出质疑，指出其问题和风险。
+
+【讨论主题】{topic}
+【待质疑的想法】{idea}
+【你的角色】{agent.role}
+
+请从你的专业角度，列出3个质疑这个想法的论点（100字以内）："""
+            
+            result = await self.llm_client.get_completion_async(
+                system_prompt=f"你是辩论赛反方代表，你的角色是{agent.role}，需要理性地质疑和挑战这个想法。",
+                user_prompt=prompt,
+                model=agent.model_name
+            )
+            return {"agent": agent.name, "role": agent.role, "argument": result}
+        
+        # 正反方并行执行
+        pro_tasks = [argue_for_async(agent) for agent in pro_agents]
+        con_tasks = [argue_against_async(agent) for agent in con_agents]
+        
+        all_results = await asyncio.gather(*pro_tasks, *con_tasks)
+        
+        pro_arguments = all_results[:len(pro_agents)]
+        con_arguments = all_results[len(pro_agents):]
+        
+        # 综合辩论结果
+        synthesis = self.synthesize_debate(idea, pro_arguments, con_arguments, topic)
+        
+        return {
+            "idea": idea,
+            "pro_arguments": pro_arguments,
+            "con_arguments": con_arguments,
+            "synthesis": synthesis
+        }
+

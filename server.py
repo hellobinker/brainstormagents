@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, AsyncGenerator
@@ -30,7 +30,13 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.params import Query
 
+from database import init_db, get_db, SessionLocal, Session as DBSession, Message as DBMessage, Agent as DBAgent
+import datetime
+
 app = FastAPI()
+
+# Initialize Database
+init_db()
 
 # CORS for SSE
 app.add_middleware(
@@ -39,6 +45,175 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+# 集成 ADK 路由
+# ============================================================
+try:
+    from routes.adk_routes import router as adk_router
+    app.include_router(adk_router)
+    print("✅ ADK routes loaded successfully")
+except ImportError as e:
+    print(f"⚠️ ADK routes not loaded: {e}")
+
+# ============================================================
+# 技术问题求解 API
+# ============================================================
+try:
+    from features.problem_solver import TechnicalProblemSolver
+    from features.intent_analyzer import IntentAnalyzer
+    from features.expert_matcher import ExpertMatcher, get_matcher
+    PROBLEM_SOLVER_AVAILABLE = True
+    print("✅ Problem Solver loaded successfully")
+except ImportError as e:
+    PROBLEM_SOLVER_AVAILABLE = False
+    print(f"⚠️ Problem Solver not loaded: {e}")
+
+# 文件处理器
+try:
+    from features.file_processor import FileProcessor, ProcessedFile, format_attachments_for_prompt
+    FILE_PROCESSOR_AVAILABLE = True
+    file_processor = FileProcessor()
+    print("✅ File Processor loaded successfully")
+except ImportError as e:
+    FILE_PROCESSOR_AVAILABLE = False
+    file_processor = None
+    print(f"⚠️ File Processor not loaded: {e}")
+
+# 存储已上传的文件（简单的内存缓存）
+uploaded_files_cache: Dict[str, ProcessedFile] = {}
+
+
+class TechProblemRequest(BaseModel):
+    """技术问题求解请求"""
+    problem: str
+    expert_indices: Optional[List[int]] = None  # 用户指定的专家索引
+    max_experts: int = 5  # 最多使用的专家数
+    iteration_rounds: int = 1  # 迭代轮数（1=无迭代，2+=反思验证）
+    # 新增参数
+    dynamic_experts: bool = False  # 是否启用动态专家生成
+    collaboration_mode: str = "parallel"  # parallel/sequential/hierarchical/debate
+    adaptive_iteration: bool = False  # 是否启用自适应迭代
+    show_reasoning: bool = True  # 是否返回推理可视化数据
+    attachment_ids: Optional[List[str]] = None  # 附件ID列表（通过/upload上传）
+    stream: bool = False  # 是否流式返回
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    上传文件端点
+    
+    支持的格式：
+    - 文档：.md, .txt, .pdf
+    - 图片：.png, .jpg, .jpeg, .webp
+    
+    返回文件ID，用于后续求解时引用
+    """
+    if not FILE_PROCESSOR_AVAILABLE:
+        raise HTTPException(status_code=500, detail="File Processor not available")
+    
+    # 检查文件类型
+    if not file_processor.is_supported(file.filename):
+        supported = file_processor.get_supported_extensions()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"不支持的文件类型。支持：{supported}"
+        )
+    
+    # 读取文件内容
+    content = await file.read()
+    
+    # 检查文件大小
+    if len(content) > file_processor.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"文件太大。最大支持 {file_processor.MAX_FILE_SIZE // 1024 // 1024}MB"
+        )
+    
+    # 处理文件
+    processed = await file_processor.process_file(file.filename, content)
+    
+    # 生成文件ID并缓存
+    file_id = str(uuid.uuid4())[:8]
+    uploaded_files_cache[file_id] = processed
+    
+    return {
+        "file_id": file_id,
+        "filename": processed.filename,
+        "file_type": processed.file_type,
+        "content_type": processed.content_type,
+        "size_bytes": processed.size_bytes,
+        "preview": processed.text_content[:200] if processed.text_content else None
+    }
+
+
+@app.post("/solve")
+async def solve_technical_problem(request: TechProblemRequest):
+    """
+    技术问题求解端点
+    
+    自动分析问题 → 匹配专家 → 并行求解 → 迭代反思 → 整合答案
+    """
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    llm_client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
+    solver = TechnicalProblemSolver(llm_client)
+    
+    if request.stream:
+        # 流式返回
+        async def generate():
+            async for event in solver.solve_stream(
+                problem=request.problem,
+                selected_expert_indices=request.expert_indices,
+                max_experts=request.max_experts,
+                iteration_rounds=request.iteration_rounds
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        
+        return StreamingResponse(generate(), media_type="text/event-stream")
+    else:
+        # 一次性返回
+        solution = await solver.solve(
+            problem=request.problem,
+            selected_expert_indices=request.expert_indices,
+            max_experts=request.max_experts
+        )
+        return solution.to_dict()
+
+
+@app.get("/solve/experts")
+async def list_available_experts():
+    """列出可用于问题求解的专家"""
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    matcher = get_matcher()
+    return {
+        "domains": matcher.get_all_domains(),
+        "expert_count": len(matcher.experts),
+        "experts": [
+            {"index": i, "name": e.name, "role": e.role, "expertise": e.expertise}
+            for i, e in enumerate(matcher.experts)
+        ]
+    }
+
+
+@app.post("/solve/analyze")
+async def analyze_problem_intent(problem: str):
+    """只分析问题意图（不求解）"""
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    llm_client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
+    analyzer = IntentAnalyzer(llm_client)
+    intent = await analyzer.analyze(problem)
+    
+    return {
+        "intent": intent.to_dict(),
+        "recommended_experts": get_matcher().match_by_domains(intent.domains, limit=5)
+    }
 
 # Serve Frontend
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
@@ -86,6 +261,7 @@ class StartSessionRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     phase_rounds: Optional[Dict[str, int]] = None  # Custom rounds per phase
+    attachment_ids: Optional[List[str]] = None  # 附件ID列表
 
 class RunPhaseRequest(BaseModel):
     session_id: str = "default"
@@ -102,6 +278,84 @@ def get_session_or_create(session_id: str) -> SessionState:
 def create_sse_message(event: str, data: dict) -> str:
     """Create SSE formatted message"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+def save_message_to_db(session_id: str, sender: str, content: str, msg_type: str, phase: str = None, role: str = None, model: str = None):
+    """Helper to save message to SQLite"""
+    try:
+        db = SessionLocal()
+        new_msg = DBMessage(
+            session_id=session_id,
+            sender=sender,
+            content=content,
+            type=msg_type,
+            phase=phase,
+            role=role,
+            model=model,
+            timestamp=datetime.datetime.now()
+        )
+        db.add(new_msg)
+        db.commit()
+        db.close()
+    except Exception as e:
+        print(f"Error saving message to DB: {e}")
+
+@app.get("/sessions")
+def list_sessions():
+    """List past sessions from DB"""
+    db = SessionLocal()
+    try:
+        sessions = db.query(DBSession).order_by(DBSession.created_at.desc()).all()
+        return {
+            "sessions": [
+                {
+                    "id": s.id,
+                    "topic": s.topic,
+                    "created_at": s.created_at.isoformat(),
+                    "agent_count": len(s.agents)
+                }
+                for s in sessions
+            ]
+        }
+    finally:
+        db.close()
+
+@app.get("/sessions/{session_id}/history")
+def get_session_history(session_id: str):
+    """Get full chat history for a session"""
+    db = SessionLocal()
+    try:
+        session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Sort messages by ID (insertion order)
+        messages = sorted(session.messages, key=lambda m: m.id)
+        
+        return {
+            "session": {
+                "id": session.id,
+                "topic": session.topic,
+                "current_phase": session.current_phase
+            },
+            "history": [
+                {
+                    "sender": m.sender,
+                    "content": m.content,
+                    "type": m.type,
+                    "timestamp": m.timestamp.isoformat(),
+                    "role": m.role,
+                    "model": m.model,
+                    "phase": m.phase
+                }
+                for m in messages
+            ],
+            "agents": [
+                {"name": a.name, "role": a.role, "model": a.model}
+                for a in session.agents
+            ]
+        }
+    finally:
+        db.close()
 
 @app.post("/session/start")
 def start_session(request: StartSessionRequest):
@@ -130,14 +384,55 @@ def start_session(request: StartSessionRequest):
             model_name=agent_conf.model_name
         ))
     
+    # 处理附件上下文
+    topic_with_context = request.topic
+    if request.attachment_ids and FILE_PROCESSOR_AVAILABLE:
+        attachment_context = []
+        for file_id in request.attachment_ids:
+            if file_id in uploaded_files_cache:
+                processed = uploaded_files_cache[file_id]
+                if processed.text_content:
+                    attachment_context.append(f"【附件: {processed.filename}】\n{processed.text_content[:3000]}")
+                else:
+                    attachment_context.append(f"【附件: {processed.filename}】（图片，请在讨论中考虑）")
+        if attachment_context:
+            topic_with_context = f"{request.topic}\n\n{'='*40}\n参考资料:\n{'='*40}\n" + "\n\n".join(attachment_context)
+    
     # Initialize session in state
-    state.initialize_session(request.topic, agent_instances, request.phase_rounds)
+    state.initialize_session(topic_with_context, agent_instances, request.phase_rounds)
     
     # Initialize facilitator
     if not state.facilitator:
         state.facilitator = Facilitator(state.llm_client)
         # model_name is now set from config.DEFAULT_MODEL in Facilitator.__init__
-        
+
+    # PERSISTENCE: Save Session and Agents to DB
+    try:
+        db = SessionLocal()
+        # Check if session already exists in DB
+        existing = db.query(DBSession).filter(DBSession.id == state.session_id).first()
+        if not existing:
+            db_session = DBSession(
+                id=state.session_id,
+                topic=request.topic,
+                current_phase=state.facilitator.current_phase.value
+            )
+            db.add(db_session)
+            
+            for agent in agent_instances:
+                db_agent = DBAgent(
+                    session_id=state.session_id,
+                    name=agent.name,
+                    role=agent.role,
+                    model=agent.model_name
+                )
+                db.add(db_agent)
+            
+            db.commit()
+        db.close()
+    except Exception as e:
+        print(f"Error saving session start to DB: {e}")
+
     return {
         "status": "started",
         "session_id": state.session_id,
@@ -184,6 +479,12 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
     
     state.session.add_message(Message("主持人", intro, {"type": "facilitator_intro", "phase": state.facilitator.current_phase.value}))
     state.session_stats.record_message("主持人", intro, {"type": "facilitator"})
+    
+    # PERSISTENCE
+    save_message_to_db(
+        state.session_id, "主持人", intro, "facilitator", 
+        phase=state.facilitator.current_phase.value
+    )
     
     await asyncio.sleep(0.3)
     
@@ -280,6 +581,14 @@ async def generate_phase_stream(state: SessionState) -> AsyncGenerator[str, None
                     "emotion": agent.current_emotion
                 })
                 
+                # PERSISTENCE
+                save_message_to_db(
+                    state.session_id, agent.name, full_response, "agent",
+                    phase=state.facilitator.current_phase.value,
+                    role=agent.role,
+                    model=agent.model_name
+                )
+                
                 # Update visualization and send graph data
                 state.visualizer.update_graph(state.session.history)
                 graph_json = state.visualizer.export_data()
@@ -370,6 +679,9 @@ async def run_full_session_stream(session_id: str = "default") -> AsyncGenerator
     
     state.session.add_message(Message("📋 创新方案报告", summary, {"type": "summary"}))
     state.session_stats.record_message("System", summary, {"type": "summary"})
+    
+    # PERSISTENCE
+    save_message_to_db(state.session_id, "System", summary, "summary")
     
     yield create_sse_message("summary", {"content": summary})
     
@@ -717,6 +1029,9 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str, session_id: s
                     state.session.add_message(msg)
                     state.session_stats.record_message(f"👤 {user_name}", content, {"type": "human"})
                     
+                    # PERSISTENCE
+                    save_message_to_db(session_id, f"👤 {user_name}", content, "human")
+                    
                     # 触发被@的智能体响应
                     for agent_name in mentioned:
                         agent = next((a for a in state.session.agents if a.name == agent_name), None)
@@ -741,6 +1056,12 @@ async def websocket_endpoint(websocket: WebSocket, user_name: str, session_id: s
                             
                             state.session.add_message(Message(agent.name, response, {"role": agent.role}))
                             state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
+                            
+                            # PERSISTENCE
+                            save_message_to_db(
+                                session_id, agent.name, response, "agent", 
+                                role=agent.role, model=agent.model_name
+                            )
                 
                 # 如果没有提及，也是一种通用的参与
                 else:
@@ -822,6 +1143,9 @@ async def handle_mention(request: MentionRequest):
             "content": request.content,
             "mentions": mentioned
         })
+
+        # PERSISTENCE: Save human message
+        save_message_to_db(request.session_id, f"👤 {request.sender}", request.content, "human")
         
         # 触发智能体响应
         for agent_name in mentioned:
@@ -847,6 +1171,12 @@ async def handle_mention(request: MentionRequest):
                 state.session.add_message(Message(agent.name, response, {"role": agent.role}))
                 state.session_stats.record_message(agent.name, response, {"role": agent.role, "type": "agent"})
                 
+                # PERSISTENCE: Save agent response
+                save_message_to_db(
+                    request.session_id, agent.name, response, "agent", 
+                    role=agent.role, model=agent.model_name
+                )
+
                 # Broadcast response via WebSocket
                 await ws_manager.broadcast(request.session_id, {
                     "type": "agent_response",
@@ -858,6 +1188,10 @@ async def handle_mention(request: MentionRequest):
         return {"status": "processed", "mentions": mentioned}
     
     # 如果没有 Session，或者没有 Mention
+    # PERSISTENCE: Save human message even if no mention triggered (just recording)
+    if state.session and not mention_parser.has_mention(request.content):
+         save_message_to_db(request.session_id, f"👤 {request.sender}", request.content, "human")
+
     return {"status": "recorded"}
 
 # ============ Statistics Endpoints ============
