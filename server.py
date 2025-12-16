@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, AsyncGenerator
@@ -69,6 +69,20 @@ except ImportError as e:
     PROBLEM_SOLVER_AVAILABLE = False
     print(f"⚠️ Problem Solver not loaded: {e}")
 
+# 文件处理器
+try:
+    from features.file_processor import FileProcessor, ProcessedFile, format_attachments_for_prompt
+    FILE_PROCESSOR_AVAILABLE = True
+    file_processor = FileProcessor()
+    print("✅ File Processor loaded successfully")
+except ImportError as e:
+    FILE_PROCESSOR_AVAILABLE = False
+    file_processor = None
+    print(f"⚠️ File Processor not loaded: {e}")
+
+# 存储已上传的文件（简单的内存缓存）
+uploaded_files_cache: Dict[str, ProcessedFile] = {}
+
 
 class TechProblemRequest(BaseModel):
     """技术问题求解请求"""
@@ -76,7 +90,62 @@ class TechProblemRequest(BaseModel):
     expert_indices: Optional[List[int]] = None  # 用户指定的专家索引
     max_experts: int = 5  # 最多使用的专家数
     iteration_rounds: int = 1  # 迭代轮数（1=无迭代，2+=反思验证）
+    # 新增参数
+    dynamic_experts: bool = False  # 是否启用动态专家生成
+    collaboration_mode: str = "parallel"  # parallel/sequential/hierarchical/debate
+    adaptive_iteration: bool = False  # 是否启用自适应迭代
+    show_reasoning: bool = True  # 是否返回推理可视化数据
+    attachment_ids: Optional[List[str]] = None  # 附件ID列表（通过/upload上传）
     stream: bool = False  # 是否流式返回
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    上传文件端点
+    
+    支持的格式：
+    - 文档：.md, .txt, .pdf
+    - 图片：.png, .jpg, .jpeg, .webp
+    
+    返回文件ID，用于后续求解时引用
+    """
+    if not FILE_PROCESSOR_AVAILABLE:
+        raise HTTPException(status_code=500, detail="File Processor not available")
+    
+    # 检查文件类型
+    if not file_processor.is_supported(file.filename):
+        supported = file_processor.get_supported_extensions()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"不支持的文件类型。支持：{supported}"
+        )
+    
+    # 读取文件内容
+    content = await file.read()
+    
+    # 检查文件大小
+    if len(content) > file_processor.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"文件太大。最大支持 {file_processor.MAX_FILE_SIZE // 1024 // 1024}MB"
+        )
+    
+    # 处理文件
+    processed = await file_processor.process_file(file.filename, content)
+    
+    # 生成文件ID并缓存
+    file_id = str(uuid.uuid4())[:8]
+    uploaded_files_cache[file_id] = processed
+    
+    return {
+        "file_id": file_id,
+        "filename": processed.filename,
+        "file_type": processed.file_type,
+        "content_type": processed.content_type,
+        "size_bytes": processed.size_bytes,
+        "preview": processed.text_content[:200] if processed.text_content else None
+    }
 
 
 @app.post("/solve")
@@ -192,6 +261,7 @@ class StartSessionRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     phase_rounds: Optional[Dict[str, int]] = None  # Custom rounds per phase
+    attachment_ids: Optional[List[str]] = None  # 附件ID列表
 
 class RunPhaseRequest(BaseModel):
     session_id: str = "default"
@@ -314,8 +384,22 @@ def start_session(request: StartSessionRequest):
             model_name=agent_conf.model_name
         ))
     
+    # 处理附件上下文
+    topic_with_context = request.topic
+    if request.attachment_ids and FILE_PROCESSOR_AVAILABLE:
+        attachment_context = []
+        for file_id in request.attachment_ids:
+            if file_id in uploaded_files_cache:
+                processed = uploaded_files_cache[file_id]
+                if processed.text_content:
+                    attachment_context.append(f"【附件: {processed.filename}】\n{processed.text_content[:3000]}")
+                else:
+                    attachment_context.append(f"【附件: {processed.filename}】（图片，请在讨论中考虑）")
+        if attachment_context:
+            topic_with_context = f"{request.topic}\n\n{'='*40}\n参考资料:\n{'='*40}\n" + "\n\n".join(attachment_context)
+    
     # Initialize session in state
-    state.initialize_session(request.topic, agent_instances, request.phase_rounds)
+    state.initialize_session(topic_with_context, agent_instances, request.phase_rounds)
     
     # Initialize facilitator
     if not state.facilitator:

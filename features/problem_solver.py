@@ -3,9 +3,11 @@
 
 协调整个问题求解流程：
 1. 意图分析
-2. 专家匹配
-3. 并行求解
-4. 整合答案
+2. 动态专家生成/匹配
+3. 多种协作模式求解
+4. 自适应迭代控制
+5. 推理可视化
+6. 整合答案
 """
 import asyncio
 from typing import List, Dict, Any, Optional, AsyncIterator
@@ -15,6 +17,66 @@ import time
 
 from .intent_analyzer import IntentAnalyzer, ProblemIntent
 from .expert_matcher import ExpertMatcher, MatchedExpert
+
+# 新增功能模块
+try:
+    from .dynamic_expert import DynamicExpertGenerator, DynamicExpert
+    DYNAMIC_EXPERT_AVAILABLE = True
+except ImportError:
+    DYNAMIC_EXPERT_AVAILABLE = False
+
+try:
+    from .collaboration_modes import CollaborationOrchestrator, CollaborationMode, get_collaboration_mode
+    COLLABORATION_AVAILABLE = True
+except ImportError:
+    COLLABORATION_AVAILABLE = False
+
+try:
+    from .adaptive_iteration import AdaptiveIterationController, should_continue_iteration
+    ADAPTIVE_ITERATION_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_ITERATION_AVAILABLE = False
+
+try:
+    from .reasoning_visualizer import ReasoningVisualizer, visualize_reasoning
+    REASONING_VIS_AVAILABLE = True
+except ImportError:
+    REASONING_VIS_AVAILABLE = False
+
+# P0: 问题分解增强
+try:
+    from .problem_decomposer import EnhancedProblemDecomposer, DecomposedProblem
+    DECOMPOSER_AVAILABLE = True
+except ImportError:
+    DECOMPOSER_AVAILABLE = False
+
+# P0: 专家角色强化
+try:
+    from .expert_enhancer import ExpertRoleEnhancer
+    EXPERT_ENHANCER_AVAILABLE = True
+except ImportError:
+    EXPERT_ENHANCER_AVAILABLE = False
+
+# P1: 自我反思
+try:
+    from .self_reflection import SelfReflectionEngine
+    SELF_REFLECTION_AVAILABLE = True
+except ImportError:
+    SELF_REFLECTION_AVAILABLE = False
+
+# P1: 对抗验证
+try:
+    from .adversarial_validator import AdversarialValidator
+    ADVERSARIAL_AVAILABLE = True
+except ImportError:
+    ADVERSARIAL_AVAILABLE = False
+
+# P2: 多轮追问
+try:
+    from .clarification_engine import ClarificationEngine
+    CLARIFICATION_AVAILABLE = True
+except ImportError:
+    CLARIFICATION_AVAILABLE = False
 
 
 @dataclass
@@ -80,6 +142,13 @@ class TechnicalProblemSolver:
         self.llm_client = llm_client
         self.intent_analyzer = IntentAnalyzer(llm_client)
         self.expert_matcher = ExpertMatcher(expert_catalog)
+        
+        # 初始化增强模块
+        self.problem_decomposer = EnhancedProblemDecomposer(llm_client) if DECOMPOSER_AVAILABLE else None
+        self.expert_enhancer = ExpertRoleEnhancer() if EXPERT_ENHANCER_AVAILABLE else None
+        self.self_reflection = SelfReflectionEngine(llm_client) if SELF_REFLECTION_AVAILABLE else None
+        self.adversarial_validator = AdversarialValidator(llm_client) if ADVERSARIAL_AVAILABLE else None
+        self.clarification_engine = ClarificationEngine(llm_client) if CLARIFICATION_AVAILABLE else None
     
     async def solve(
         self, 
@@ -222,12 +291,13 @@ class TechnicalProblemSolver:
             task = self._solve_single(problem, intent, expert)
             tasks.append((expert, task))
         
-        # 并行执行，逐个返回结果
-        results = await asyncio.gather(*[t[1] for t in tasks])
-        
-        for i, (expert, _) in enumerate(tasks):
-            solution = results[i]
+        # 逐个执行并立即流式输出（用户可看到专家依次回复）
+        for expert, task in tasks:
+            yield {"stage": "expert_solving", "expert": expert.name, "message": f"⏳ {expert.name} 正在分析..."}
+            
+            solution = await task  # 等待单个专家完成
             sub_solutions.append(solution)
+            
             yield {
                 "stage": "expert_done",
                 "expert": expert.name,
@@ -329,7 +399,71 @@ class TechnicalProblemSolver:
                 "data": evaluation
             }
         
-        # 8. 整合最终答案
+        # 8. 自我反思（如果启用迭代）
+        if iteration_rounds >= 2 and self.self_reflection:
+            yield {"stage": "reflection_deep", "message": "🔍 专家自我反思中..."}
+            
+            reflections = []
+            for sol in current_solutions:
+                reflection = await self.self_reflection.reflect(
+                    problem, sol.expert_name, sol.expert_role, sol.solution
+                )
+                reflections.append(reflection)
+                yield {
+                    "stage": "self_reflection",
+                    "expert": sol.expert_name,
+                    "data": reflection.to_dict()
+                }
+            
+            # 汇总反思
+            reflection_summary = await self.self_reflection.aggregate_reflections(reflections)
+            yield {
+                "stage": "reflection_summary",
+                "data": reflection_summary
+            }
+        
+        # 9. 对抗验证（如果启用迭代）
+        if iteration_rounds >= 2 and self.adversarial_validator:
+            yield {"stage": "adversarial_start", "message": "⚔️ 对抗验证中..."}
+            
+            solutions_for_challenge = [
+                {"expert": s.expert_name, "solution": s.solution}
+                for s in current_solutions
+            ]
+            challenge_report = await self.adversarial_validator.challenge(problem, solutions_for_challenge)
+            
+            yield {
+                "stage": "adversarial_result",
+                "data": challenge_report.to_dict()
+            }
+            
+            # 生成改进建议
+            if challenge_report.verdict != "pass":
+                improvement = await self.adversarial_validator.generate_counter_proposal(
+                    problem, solutions_for_challenge, challenge_report
+                )
+                yield {
+                    "stage": "improvement_suggestion",
+                    "content": improvement
+                }
+        
+        # 10. 生成推理可视化
+        reasoning_data = None
+        if REASONING_VIS_AVAILABLE:
+            try:
+                solutions_for_vis = [
+                    {"expert": s.expert_name, "solution": s.solution}
+                    for s in current_solutions
+                ]
+                reasoning_data = visualize_reasoning(problem, solutions_for_vis)
+                yield {
+                    "stage": "reasoning_graph",
+                    "data": reasoning_data
+                }
+            except Exception as e:
+                print(f"[WARN] Reasoning visualization failed: {e}")
+        
+        # 11. 整合最终答案
         yield {"stage": "integrating", "message": "正在整合最终解决方案..."}
         final_solution = await self._integrate_solutions(problem, intent, current_solutions)
         
@@ -341,7 +475,8 @@ class TechnicalProblemSolver:
                 "final_solution": final_solution,
                 "total_duration_ms": total_duration,
                 "expert_count": len(matched_experts),
-                "iteration_rounds": iteration_rounds
+                "iteration_rounds": iteration_rounds,
+                "reasoning_graph": reasoning_data  # 包含推理可视化
             }
         }
     
@@ -414,9 +549,17 @@ class TechnicalProblemSolver:
         # 使用 gemini-3-pro-preview 作为默认模型
         model = "gemini-3-pro-preview"
         
+        # 使用专家增强器生成强化的系统提示词
+        if self.expert_enhancer:
+            system_prompt = self.expert_enhancer.get_system_prompt(
+                expert.name, expert.role, expert.matched_domain or expert.expertise
+            )
+        else:
+            system_prompt = f"你是{expert.role}，擅长{expert.expertise}。请展示完整的推理过程，给出详尽、专业、可操作的解决方案。不要限制篇幅，确保方案完整。"
+        
         try:
             solution = await self.llm_client.get_completion_async(
-                system_prompt=f"你是{expert.role}，擅长{expert.expertise}。请展示完整的推理过程，给出详尽、专业、可操作的解决方案。不要限制篇幅，确保方案完整。",
+                system_prompt=system_prompt,
                 user_prompt=prompt,
                 model=model
             )

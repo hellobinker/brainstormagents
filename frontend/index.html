@@ -425,6 +425,35 @@
                                 placeholder="输入讨论主题..."></textarea>
                         </div>
 
+                        <!-- 头脑风暴附件上传 -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">📎 参考资料（可选）</label>
+                            <div class="border-2 border-dashed border-white/20 rounded-lg p-3 text-center hover:border-white/40 transition cursor-pointer text-sm"
+                                @click="$refs.brainstormFileInput.click()" @dragover.prevent
+                                @drop.prevent="handleBrainstormFileDrop">
+                                <input type="file" ref="brainstormFileInput" class="hidden"
+                                    accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp" multiple
+                                    @change="handleBrainstormFileSelect">
+                                <div v-if="brainstormAttachments.length === 0">
+                                    <span class="text-gray-400">拖拽或点击上传</span>
+                                    <div class="text-xs text-gray-500 mt-1">支持 MD/TXT/PDF 和图片</div>
+                                </div>
+                                <div v-else class="space-y-1 text-left">
+                                    <div v-for="(file, i) in brainstormAttachments" :key="i"
+                                        class="flex items-center justify-between bg-white/10 rounded p-1 text-xs">
+                                        <span>
+                                            {{ file.file_type === 'image' ? '🖼️' : '📄' }}
+                                            {{ file.filename }}
+                                        </span>
+                                        <button @click.stop="removeBrainstormAttachment(i)"
+                                            class="text-red-400 hover:text-red-300">✕</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="brainstormUploadError" class="text-red-400 text-xs mt-1">{{ brainstormUploadError
+                                }}</div>
+                        </div>
+
                         <h3 class="text-md font-medium mb-2 flex items-center gap-2">
                             <span>👥</span> 参与专家 ({{ agents.length }})
                         </h3>
@@ -523,6 +552,35 @@
                                 placeholder="详细描述您的技术问题...&#10;例如：空调室外机在高温环境下散热效率下降，同时噪音增大，如何优化？"></textarea>
                         </div>
 
+                        <!-- 文件上传区域 -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">📎 附件（可选）</label>
+                            <div class="border-2 border-dashed border-white/20 rounded-lg p-4 text-center hover:border-white/40 transition cursor-pointer"
+                                @click="$refs.fileInput.click()" @dragover.prevent @drop.prevent="handleFileDrop">
+                                <input type="file" ref="fileInput" class="hidden"
+                                    accept=".md,.txt,.pdf,.png,.jpg,.jpeg,.webp" multiple @change="handleFileSelect">
+                                <div v-if="solverAttachments.length === 0">
+                                    <span class="text-gray-400">拖拽文件或点击上传</span>
+                                    <div class="text-xs text-gray-500 mt-1">支持 MD/TXT/PDF 文档和 PNG/JPG/WEBP 图片</div>
+                                </div>
+                                <div v-else class="space-y-2">
+                                    <div v-for="(file, i) in solverAttachments" :key="i"
+                                        class="flex items-center justify-between bg-white/10 rounded p-2 text-sm">
+                                        <span>
+                                            {{ file.file_type === 'image' ? '🖼️' : '📄' }}
+                                            {{ file.filename }}
+                                            <span class="text-xs text-gray-400">({{ (file.size_bytes / 1024).toFixed(1)
+                                                }}KB)</span>
+                                        </span>
+                                        <button @click.stop="removeAttachment(i)"
+                                            class="text-red-400 hover:text-red-300">✕</button>
+                                    </div>
+                                    <div class="text-xs text-gray-500">点击添加更多文件</div>
+                                </div>
+                            </div>
+                            <div v-if="uploadError" class="text-red-400 text-xs mt-1">{{ uploadError }}</div>
+                        </div>
+
                         <!-- Expert Selection Mode -->
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-300 mb-2">专家选择方式</label>
@@ -571,7 +629,7 @@
 
                         <!-- Iteration Rounds -->
                         <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-300 mb-1">迭代轮数 (反思验证)</label>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">迭代轮数</label>
                             <div class="flex items-center gap-2">
                                 <button @click="solverIterationRounds = Math.max(1, solverIterationRounds - 1)"
                                     class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">-</button>
@@ -581,6 +639,51 @@
                             </div>
                             <div class="text-xs text-gray-500 mt-1">
                                 {{ solverIterationRounds === 1 ? '无迭代' : `${solverIterationRounds - 1}次反思优化` }}
+                            </div>
+                        </div>
+
+                        <!-- 高级选项折叠 -->
+                        <div class="mb-4">
+                            <button @click="showAdvancedOptions = !showAdvancedOptions"
+                                class="text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                                {{ showAdvancedOptions ? '▼' : '▶' }} 高级选项
+                            </button>
+
+                            <div v-if="showAdvancedOptions" class="mt-3 space-y-3 p-3 bg-white/5 rounded-lg">
+                                <!-- 动态专家生成 -->
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm text-gray-300">🧠 动态专家生成</label>
+                                    <button @click="solverDynamicExperts = !solverDynamicExperts"
+                                        :class="['w-12 h-6 rounded-full transition', solverDynamicExperts ? 'bg-green-500' : 'bg-gray-600']">
+                                        <span
+                                            :class="['block w-5 h-5 bg-white rounded-full transition transform', solverDynamicExperts ? 'translate-x-6' : 'translate-x-1']"></span>
+                                    </button>
+                                </div>
+
+                                <!-- 协作模式 -->
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">🤝 协作模式</label>
+                                    <select v-model="solverCollabMode"
+                                        class="w-full bg-white/10 border border-white/20 rounded p-1.5 text-sm">
+                                        <option value="parallel">⚡ 并行求解</option>
+                                        <option value="sequential">🔗 串行接力</option>
+                                        <option value="hierarchical">📊 分层决策</option>
+                                        <option value="debate">⚔️ 对抗辩论</option>
+                                    </select>
+                                </div>
+
+                                <!-- 自适应迭代 -->
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm text-gray-300">🔄 自适应迭代</label>
+                                    <button @click="solverAdaptiveIteration = !solverAdaptiveIteration"
+                                        :class="['w-12 h-6 rounded-full transition', solverAdaptiveIteration ? 'bg-green-500' : 'bg-gray-600']">
+                                        <span
+                                            :class="['block w-5 h-5 bg-white rounded-full transition transform', solverAdaptiveIteration ? 'translate-x-6' : 'translate-x-1']"></span>
+                                    </button>
+                                </div>
+                                <div v-if="solverAdaptiveIteration" class="text-xs text-gray-400">
+                                    根据专家共识度自动决定是否继续迭代
+                                </div>
                             </div>
                         </div>
 
@@ -634,6 +737,12 @@
                                 </span>
                                 <span v-else-if="stage.stage === 'evaluation'" class="text-yellow-400">
                                     📊 评估: {{ stage.data?.overall_score }}/100
+                                </span>
+                                <span v-else-if="stage.stage === 'expert_solving'" class="text-purple-300">
+                                    ⏳ {{ stage.expert }} 分析中...
+                                </span>
+                                <span v-else-if="stage.stage === 'reasoning_graph'" class="text-indigo-400">
+                                    🧠 推理链已生成
                                 </span>
                                 <span v-else-if="stage.stage === 'complete'" class="text-green-400 font-medium">
                                     ✅ 完成! ({{ (stage.data?.total_duration_ms / 1000).toFixed(1) }}秒, {{
@@ -987,6 +1096,10 @@
                 const showReportModal = ref(false);
                 const reportContent = ref("");
 
+                // Brainstorm Attachments
+                const brainstormAttachments = ref([]);
+                const brainstormUploadError = ref('');
+
                 // Available API Models
                 const availableModels = ref(["gemini-3-pro-preview", "grok-4.1-fast", "gpt-5-mini", "gemini-2.5-flash", "gpt-4"]);
 
@@ -1010,9 +1123,17 @@
                 const solverSelectedExperts = ref([]);
                 const solverMaxExperts = ref(5);
                 const solverIterationRounds = ref(1);  // 迭代轮数
+                // 高级选项
+                const showAdvancedOptions = ref(false);
+                const solverDynamicExperts = ref(false);  // 动态专家生成
+                const solverCollabMode = ref('parallel');  // 协作模式
+                const solverAdaptiveIteration = ref(false);  // 自适应迭代
                 const solverLoading = ref(false);
                 const solverStages = ref([]);
                 const solverResult = ref(null);
+                const solverReasoningGraph = ref(null);  // 推理可视化数据
+                const solverAttachments = ref([]);  // 已上传的附件
+                const uploadError = ref('');  // 上传错误信息
                 const showSolverExpertModal = ref(false);
 
                 const removeSolverExpert = (index) => {
@@ -1024,6 +1145,97 @@
                         solverSelectedExperts.value.push(idx);
                     }
                     showSolverExpertModal.value = false;
+                };
+
+                // 文件上传处理
+                const handleFileSelect = async (event) => {
+                    const files = event.target.files;
+                    if (files) {
+                        await uploadFiles(Array.from(files));
+                    }
+                    event.target.value = '';  // 重置input
+                };
+
+                const handleFileDrop = async (event) => {
+                    const files = event.dataTransfer.files;
+                    if (files) {
+                        await uploadFiles(Array.from(files));
+                    }
+                };
+
+                const uploadFiles = async (files) => {
+                    uploadError.value = '';
+                    for (const file of files) {
+                        try {
+                            const formData = new FormData();
+                            formData.append('file', file);
+
+                            const response = await fetch('/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.detail || '上传失败');
+                            }
+
+                            const result = await response.json();
+                            solverAttachments.value.push(result);
+                        } catch (e) {
+                            uploadError.value = `上传 ${file.name} 失败: ${e.message}`;
+                            console.error('Upload error:', e);
+                        }
+                    }
+                };
+
+                const removeAttachment = (index) => {
+                    solverAttachments.value.splice(index, 1);
+                };
+
+                // 头脑风暴文件上传处理
+                const handleBrainstormFileSelect = async (event) => {
+                    const files = event.target.files;
+                    if (files) {
+                        await uploadBrainstormFiles(Array.from(files));
+                    }
+                    event.target.value = '';
+                };
+
+                const handleBrainstormFileDrop = async (event) => {
+                    const files = event.dataTransfer.files;
+                    if (files) {
+                        await uploadBrainstormFiles(Array.from(files));
+                    }
+                };
+
+                const uploadBrainstormFiles = async (files) => {
+                    brainstormUploadError.value = '';
+                    for (const file of files) {
+                        try {
+                            const formData = new FormData();
+                            formData.append('file', file);
+
+                            const response = await fetch('/upload', {
+                                method: 'POST',
+                                body: formData
+                            });
+
+                            if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.detail || '上传失败');
+                            }
+
+                            const result = await response.json();
+                            brainstormAttachments.value.push(result);
+                        } catch (e) {
+                            brainstormUploadError.value = `上传 ${file.name} 失败: ${e.message}`;
+                        }
+                    }
+                };
+
+                const removeBrainstormAttachment = (index) => {
+                    brainstormAttachments.value.splice(index, 1);
                 };
 
                 const startSolveProblem = async () => {
@@ -1052,11 +1264,21 @@
                             problem: solverProblem.value,
                             max_experts: solverMaxExperts.value,
                             iteration_rounds: solverIterationRounds.value,
+                            // 高级选项
+                            dynamic_experts: solverDynamicExperts.value,
+                            collaboration_mode: solverCollabMode.value,
+                            adaptive_iteration: solverAdaptiveIteration.value,
+                            show_reasoning: true,
                             stream: true
                         };
 
                         if (solverExpertMode.value === 'manual' && solverSelectedExperts.value.length > 0) {
                             requestBody.expert_indices = solverSelectedExperts.value;
+                        }
+
+                        // 添加附件ID
+                        if (solverAttachments.value.length > 0) {
+                            requestBody.attachment_ids = solverAttachments.value.map(a => a.file_id);
                         }
 
                         // Start streaming request
@@ -1096,6 +1318,14 @@
                                                 sender: '专家匹配',
                                                 content: `**已匹配专家**:\n${event.data.experts.map(e => `- ${e.name} (${e.role})`).join('\n')}`,
                                                 phase_name: '匹配'
+                                            });
+                                        } else if (event.stage === 'expert_solving') {
+                                            // 显示专家正在分析的状态
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '求解进度',
+                                                content: event.message,
+                                                phase_name: '分析中'
                                             });
                                         } else if (event.stage === 'expert_done') {
                                             messages.value.push({
@@ -1153,6 +1383,49 @@
                                                     (evalData.ranking ? `- **方案排名**: ${evalData.ranking.join(' > ')}` : ''),
                                                 phase_name: '评估'
                                             });
+                                        } else if (event.stage === 'self_reflection') {
+                                            // 自我反思
+                                            const refData = event.data;
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: `🔍 ${event.expert}`,
+                                                content: `**自我反思**\n\n` +
+                                                    `- **最大风险**: ${refData.biggest_risk || 'N/A'}\n` +
+                                                    `- **信心程度**: ${refData.confidence_level}/10\n` +
+                                                    `- **替代方案**: ${refData.alternative_approach || '无'}`,
+                                                phase_name: '反思'
+                                            });
+                                        } else if (event.stage === 'adversarial_result') {
+                                            // 对抗验证
+                                            const advData = event.data;
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '⚔️ 对抗验证',
+                                                content: `**验证报告**\n\n` +
+                                                    `- **稳健性评分**: ${advData.overall_robustness}/10\n` +
+                                                    `- **判定结果**: ${advData.verdict}\n` +
+                                                    (advData.critical_flaws?.length ? `- **致命缺陷**: ${advData.critical_flaws.join('; ')}` : ''),
+                                                phase_name: '验证'
+                                            });
+                                        } else if (event.stage === 'improvement_suggestion') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '💡 改进建议',
+                                                content: event.content,
+                                                phase_name: '改进'
+                                            });
+                                        } else if (event.stage === 'reasoning_graph') {
+                                            // 推理可视化
+                                            solverReasoningGraph.value = event.data;
+                                            const mermaidCode = event.data?.mermaid || '';
+                                            if (mermaidCode) {
+                                                messages.value.push({
+                                                    type: 'facilitator',
+                                                    sender: '🧠 推理链',
+                                                    content: `**推理可视化**\n\n\`\`\`mermaid\n${mermaidCode}\n\`\`\``,
+                                                    phase_name: '推理'
+                                                });
+                                            }
                                         } else if (event.stage === 'complete') {
                                             messages.value.push({
                                                 type: 'summary',
@@ -1160,6 +1433,10 @@
                                                 content: event.data.final_solution
                                             });
                                             solverResult.value = event.data;
+                                            // 保存推理图
+                                            if (event.data.reasoning_graph) {
+                                                solverReasoningGraph.value = event.data.reasoning_graph;
+                                            }
                                         }
 
                                         scrollToBottom();
@@ -1388,16 +1665,24 @@
                     completedPhases.value = [];
 
                     try {
+                        // Build request with attachments
+                        const requestBody = {
+                            session_id: sessionId.value,
+                            topic: topic.value,
+                            agents: agents.value,
+                            phase_rounds: phaseRounds.value
+                        };
+
+                        // 添加附件ID
+                        if (brainstormAttachments.value.length > 0) {
+                            requestBody.attachment_ids = brainstormAttachments.value.map(a => a.file_id);
+                        }
+
                         // Start session
                         const startRes = await fetch('/session/start', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                session_id: sessionId.value,
-                                topic: topic.value,
-                                agents: agents.value,
-                                phase_rounds: phaseRounds.value
-                            })
+                            body: JSON.stringify(requestBody)
                         });
 
                         if (!startRes.ok) throw new Error('Failed to start session');
@@ -1988,15 +2273,28 @@
 
                 // Helper function to download file
                 const downloadFile = (content, filename, mimeType) => {
+                    // 确保文件名有正确的后缀
+                    if (!filename.includes('.')) {
+                        const ext = mimeType.includes('markdown') ? '.md' :
+                            mimeType.includes('pdf') ? '.pdf' : '.txt';
+                        filename = filename + ext;
+                    }
+
                     const blob = new Blob([content], { type: mimeType + ';charset=utf-8' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
+                    a.style.display = 'none';
                     a.href = url;
                     a.download = filename;
+                    a.setAttribute('download', filename);  // 双重保险
                     document.body.appendChild(a);
                     a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+
+                    // 延迟清理，确保下载开始
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }, 100);
                 };
 
                 const fetchModels = async () => {
@@ -2020,10 +2318,16 @@
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
                     statistics, onlineUsers, userName, userMessage,
                     showReportModal, reportContent, availableModels,
+                    // Brainstorm Attachments
+                    brainstormAttachments, brainstormUploadError,
+                    handleBrainstormFileSelect, handleBrainstormFileDrop, removeBrainstormAttachment,
                     currentTab, pastSessions, fetchSessions, loadSessionHistory,
                     // Problem Solver
                     solverProblem, solverExpertMode, solverSelectedExperts, solverMaxExperts,
-                    solverIterationRounds, solverLoading, solverStages, solverResult, showSolverExpertModal,
+                    solverIterationRounds, showAdvancedOptions, solverDynamicExperts,
+                    solverCollabMode, solverAdaptiveIteration, solverReasoningGraph,
+                    solverAttachments, uploadError, handleFileSelect, handleFileDrop, removeAttachment,
+                    solverLoading, solverStages, solverResult, showSolverExpertModal,
                     startSolveProblem, removeSolverExpert, addSolverExpert,
                     // Original functions
                     addPresetAgent, removeAgent, startFullSession,
