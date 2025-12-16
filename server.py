@@ -46,6 +46,106 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# 集成 ADK 路由
+# ============================================================
+try:
+    from routes.adk_routes import router as adk_router
+    app.include_router(adk_router)
+    print("✅ ADK routes loaded successfully")
+except ImportError as e:
+    print(f"⚠️ ADK routes not loaded: {e}")
+
+# ============================================================
+# 技术问题求解 API
+# ============================================================
+try:
+    from features.problem_solver import TechnicalProblemSolver
+    from features.intent_analyzer import IntentAnalyzer
+    from features.expert_matcher import ExpertMatcher, get_matcher
+    PROBLEM_SOLVER_AVAILABLE = True
+    print("✅ Problem Solver loaded successfully")
+except ImportError as e:
+    PROBLEM_SOLVER_AVAILABLE = False
+    print(f"⚠️ Problem Solver not loaded: {e}")
+
+
+class TechProblemRequest(BaseModel):
+    """技术问题求解请求"""
+    problem: str
+    expert_indices: Optional[List[int]] = None  # 用户指定的专家索引
+    max_experts: int = 5  # 最多使用的专家数
+    iteration_rounds: int = 1  # 迭代轮数（1=无迭代，2+=反思验证）
+    stream: bool = False  # 是否流式返回
+
+
+@app.post("/solve")
+async def solve_technical_problem(request: TechProblemRequest):
+    """
+    技术问题求解端点
+    
+    自动分析问题 → 匹配专家 → 并行求解 → 迭代反思 → 整合答案
+    """
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    llm_client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
+    solver = TechnicalProblemSolver(llm_client)
+    
+    if request.stream:
+        # 流式返回
+        async def generate():
+            async for event in solver.solve_stream(
+                problem=request.problem,
+                selected_expert_indices=request.expert_indices,
+                max_experts=request.max_experts,
+                iteration_rounds=request.iteration_rounds
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        
+        return StreamingResponse(generate(), media_type="text/event-stream")
+    else:
+        # 一次性返回
+        solution = await solver.solve(
+            problem=request.problem,
+            selected_expert_indices=request.expert_indices,
+            max_experts=request.max_experts
+        )
+        return solution.to_dict()
+
+
+@app.get("/solve/experts")
+async def list_available_experts():
+    """列出可用于问题求解的专家"""
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    matcher = get_matcher()
+    return {
+        "domains": matcher.get_all_domains(),
+        "expert_count": len(matcher.experts),
+        "experts": [
+            {"index": i, "name": e.name, "role": e.role, "expertise": e.expertise}
+            for i, e in enumerate(matcher.experts)
+        ]
+    }
+
+
+@app.post("/solve/analyze")
+async def analyze_problem_intent(problem: str):
+    """只分析问题意图（不求解）"""
+    if not PROBLEM_SOLVER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Problem Solver not available")
+    
+    llm_client = LLMClient(api_key=API_KEY, base_url=API_BASE_URL)
+    analyzer = IntentAnalyzer(llm_client)
+    intent = await analyzer.analyze(problem)
+    
+    return {
+        "intent": intent.to_dict(),
+        "recommended_experts": get_matcher().match_by_domains(intent.domains, limit=5)
+    }
+
 # Serve Frontend
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 

@@ -396,13 +396,19 @@
                             class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
                             :class="currentTab === 'config' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
                             @click="currentTab = 'config'">
-                            <span>⚙️</span> 配置
+                            <span>⚙️</span> 头脑风暴
+                        </button>
+                        <button
+                            class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
+                            :class="currentTab === 'solver' ? 'bg-green-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
+                            @click="currentTab = 'solver'">
+                            <span>🔧</span> 问题求解
                         </button>
                         <button
                             class="flex-1 py-1.5 text-xs font-medium rounded-md transition flex items-center justify-center gap-1"
                             :class="currentTab === 'history' ? 'bg-blue-600 shadow text-white' : 'hover:bg-white/10 text-gray-400'"
                             @click="currentTab = 'history'; fetchSessions()">
-                            <span>📜</span> 历史记录
+                            <span>📜</span> 历史
                         </button>
                     </div>
 
@@ -500,6 +506,140 @@
                                     <span>🧠 {{ session.agent_count }} 专家</span>
                                     <span>{{ new Date(session.created_at).toLocaleString() }}</span>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Problem Solver Tab -->
+                    <div v-show="currentTab === 'solver'">
+                        <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                            <span>🔧</span> 技术问题求解
+                        </h2>
+
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">问题描述</label>
+                            <textarea v-model="solverProblem" rows="4"
+                                class="w-full bg-white/10 border border-white/20 rounded-lg p-2 text-white placeholder-gray-400"
+                                placeholder="详细描述您的技术问题...&#10;例如：空调室外机在高温环境下散热效率下降，同时噪音增大，如何优化？"></textarea>
+                        </div>
+
+                        <!-- Expert Selection Mode -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">专家选择方式</label>
+                            <div class="flex gap-2 mb-2">
+                                <button @click="solverExpertMode = 'auto'"
+                                    :class="['flex-1 py-2 text-xs rounded-lg transition', 
+                                             solverExpertMode === 'auto' ? 'bg-green-600' : 'bg-white/10 hover:bg-white/20']">
+                                    🤖 自动匹配
+                                </button>
+                                <button @click="solverExpertMode = 'manual'"
+                                    :class="['flex-1 py-2 text-xs rounded-lg transition', 
+                                             solverExpertMode === 'manual' ? 'bg-green-600' : 'bg-white/10 hover:bg-white/20']">
+                                    ✋ 手动选择
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Expert Selection -->
+                        <div v-if="solverExpertMode === 'manual'" class="mb-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="text-sm text-gray-300">已选专家 ({{ solverSelectedExperts.length }})</span>
+                                <button @click="showSolverExpertModal = true"
+                                    class="text-xs bg-white/10 px-2 py-1 rounded hover:bg-white/20">➕ 添加</button>
+                            </div>
+                            <div class="flex flex-wrap gap-1">
+                                <span v-for="(idx, i) in solverSelectedExperts" :key="i"
+                                    class="px-2 py-1 bg-green-500/20 rounded text-xs flex items-center gap-1">
+                                    {{ expertPresets[idx]?.name || idx }}
+                                    <button @click="removeSolverExpert(i)"
+                                        class="text-red-400 hover:text-red-300">✕</button>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Max Experts -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">最大专家数</label>
+                            <div class="flex items-center gap-2">
+                                <button @click="solverMaxExperts = Math.max(1, solverMaxExperts - 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">-</button>
+                                <span class="w-8 text-center">{{ solverMaxExperts }}</span>
+                                <button @click="solverMaxExperts = Math.min(10, solverMaxExperts + 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">+</button>
+                            </div>
+                        </div>
+
+                        <!-- Iteration Rounds -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">迭代轮数 (反思验证)</label>
+                            <div class="flex items-center gap-2">
+                                <button @click="solverIterationRounds = Math.max(1, solverIterationRounds - 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">-</button>
+                                <span class="w-8 text-center">{{ solverIterationRounds }}</span>
+                                <button @click="solverIterationRounds = Math.min(5, solverIterationRounds + 1)"
+                                    class="w-8 h-8 bg-white/10 rounded hover:bg-white/20">+</button>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                {{ solverIterationRounds === 1 ? '无迭代' : `${solverIterationRounds - 1}次反思优化` }}
+                            </div>
+                        </div>
+
+                        <!-- Solve Button -->
+                        <button @click="startSolveProblem" :disabled="solverLoading || !solverProblem.trim()"
+                            class="w-full py-3 bg-gradient-to-r from-green-500 to-teal-600 rounded-lg font-bold hover:opacity-90 disabled:opacity-50">
+                            {{ solverLoading ? '🔄 求解中...' : '🚀 开始求解' }}
+                        </button>
+
+                        <!-- Solver Progress -->
+                        <div v-if="solverStages.length > 0" class="mt-4 space-y-2">
+                            <div class="text-sm font-medium text-gray-300">求解进度</div>
+                            <div v-for="(stage, i) in solverStages" :key="i" class="text-xs p-2 rounded bg-white/5">
+                                <span v-if="stage.stage === 'analyzing'" class="text-yellow-400">🔍 {{ stage.message
+                                    }}</span>
+                                <span v-else-if="stage.stage === 'analyzed'" class="text-blue-400">
+                                    ✅ 识别领域: {{ stage.data?.domains?.join(', ') }}
+                                </span>
+                                <span v-else-if="stage.stage === 'matched'" class="text-green-400">
+                                    👥 匹配专家: {{ stage.data?.experts?.map(e => e.name).join(', ') }}
+                                </span>
+                                <span v-else-if="stage.stage === 'expert_done'" class="text-purple-400">
+                                    💬 {{ stage.expert }}: {{ stage.solution?.substring(0, 50) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'reflection_start'" class="text-orange-400">
+                                    🔄 {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'reflection'" class="text-orange-300">
+                                    💭 反思: {{ stage.feedback?.substring(0, 80) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'improvement'" class="text-cyan-400">
+                                    ⬆️ {{ stage.expert }} 优化中...
+                                </span>
+                                <span v-else-if="stage.stage === 'validation'" class="text-pink-400">
+                                    ✓ 验证: {{ stage.result?.solved }} / 可行性{{ stage.result?.feasibility }}
+                                </span>
+                                <span v-else-if="stage.stage === 'discussion_start'" class="text-blue-400">
+                                    💬 {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'discussion'" class="text-blue-300">
+                                    🗣️ {{ stage.expert }} 讨论中...
+                                </span>
+                                <span v-else-if="stage.stage === 'critique_start'" class="text-red-400">
+                                    ⚔️ {{ stage.message }}
+                                </span>
+                                <span v-else-if="stage.stage === 'critique'" class="text-red-300">
+                                    📝 批评: {{ stage.critique?.substring(0, 60) }}...
+                                </span>
+                                <span v-else-if="stage.stage === 'critique_response'" class="text-green-300">
+                                    🛡️ {{ stage.expert }} 回应中...
+                                </span>
+                                <span v-else-if="stage.stage === 'evaluation'" class="text-yellow-400">
+                                    📊 评估: {{ stage.data?.overall_score }}/100
+                                </span>
+                                <span v-else-if="stage.stage === 'complete'" class="text-green-400 font-medium">
+                                    ✅ 完成! ({{ (stage.data?.total_duration_ms / 1000).toFixed(1) }}秒, {{
+                                    stage.data?.iteration_rounds || 1 }}轮)
+                                </span>
+                                <span v-else>{{ stage.message || stage.stage }}</span>
                             </div>
                         </div>
                     </div>
@@ -861,8 +1001,187 @@
                 ]);
 
                 // History Management
-                const currentTab = ref('config'); // 'config' or 'history'
+                const currentTab = ref('config'); // 'config', 'history', or 'solver'
                 const pastSessions = ref([]);
+
+                // Problem Solver State
+                const solverProblem = ref('');
+                const solverExpertMode = ref('auto'); // 'auto' or 'manual'
+                const solverSelectedExperts = ref([]);
+                const solverMaxExperts = ref(5);
+                const solverIterationRounds = ref(1);  // 迭代轮数
+                const solverLoading = ref(false);
+                const solverStages = ref([]);
+                const solverResult = ref(null);
+                const showSolverExpertModal = ref(false);
+
+                const removeSolverExpert = (index) => {
+                    solverSelectedExperts.value.splice(index, 1);
+                };
+
+                const addSolverExpert = (idx) => {
+                    if (!solverSelectedExperts.value.includes(idx)) {
+                        solverSelectedExperts.value.push(idx);
+                    }
+                    showSolverExpertModal.value = false;
+                };
+
+                const startSolveProblem = async () => {
+                    if (!solverProblem.value.trim()) return;
+
+                    solverLoading.value = true;
+                    solverStages.value = [];
+                    solverResult.value = null;
+
+                    // Clear previous messages and show solver mode in chat
+                    messages.value = [];
+                    sessionActive.value = true;
+
+                    // Add initial message
+                    messages.value.push({
+                        type: 'facilitator',
+                        sender: '问题求解助手',
+                        content: `🔧 正在分析问题：\n\n> ${solverProblem.value}`,
+                        phase_name: '问题求解'
+                    });
+                    scrollToBottom();
+
+                    try {
+                        // Build request
+                        const requestBody = {
+                            problem: solverProblem.value,
+                            max_experts: solverMaxExperts.value,
+                            iteration_rounds: solverIterationRounds.value,
+                            stream: true
+                        };
+
+                        if (solverExpertMode.value === 'manual' && solverSelectedExperts.value.length > 0) {
+                            requestBody.expert_indices = solverSelectedExperts.value;
+                        }
+
+                        // Start streaming request
+                        const response = await fetch('/solve', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody)
+                        });
+
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            const text = decoder.decode(value);
+                            const lines = text.split('\n');
+
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    try {
+                                        const event = JSON.parse(line.slice(6));
+                                        solverStages.value.push(event);
+
+                                        // Update chat based on event
+                                        if (event.stage === 'analyzed') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '意图分析',
+                                                content: `**问题类型**: ${event.data.problem_type}\n**涉及领域**: ${event.data.domains.join(', ')}\n**子问题**: \n${event.data.sub_problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}`,
+                                                phase_name: '分析'
+                                            });
+                                        } else if (event.stage === 'matched') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '专家匹配',
+                                                content: `**已匹配专家**:\n${event.data.experts.map(e => `- ${e.name} (${e.role})`).join('\n')}`,
+                                                phase_name: '匹配'
+                                            });
+                                        } else if (event.stage === 'expert_done') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                role: event.role,
+                                                model: event.model || 'unknown',
+                                                phase_name: event.domain || '深度分析',
+                                                content: event.solution
+                                            });
+                                        } else if (event.stage === 'discussion_start') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '讨论主持',
+                                                content: event.message,
+                                                phase_name: '专家讨论'
+                                            });
+                                        } else if (event.stage === 'discussion') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                role: event.role,
+                                                content: `**💬 讨论评论**\n\n${event.comment}`,
+                                                phase_name: '讨论'
+                                            });
+                                        } else if (event.stage === 'critique_start') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '批评审查',
+                                                content: event.message,
+                                                phase_name: '批评辩论'
+                                            });
+                                        } else if (event.stage === 'critique') {
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '⚔️ 技术批评者',
+                                                content: `**技术批评**\n\n${event.critique}`,
+                                                phase_name: '批评'
+                                            });
+                                        } else if (event.stage === 'critique_response') {
+                                            messages.value.push({
+                                                type: 'agent',
+                                                sender: event.expert,
+                                                content: `**🛡️ 回应批评**\n\n${event.response}`,
+                                                phase_name: '辩论'
+                                            });
+                                        } else if (event.stage === 'evaluation') {
+                                            const evalData = event.data;
+                                            messages.value.push({
+                                                type: 'facilitator',
+                                                sender: '📊 综合评估',
+                                                content: `**多维度评估结果**\n\n` +
+                                                    `- **综合评分**: ${evalData.overall_score || 'N/A'}/100\n` +
+                                                    `- **推荐意见**: ${evalData.recommendation || '无'}\n` +
+                                                    (evalData.ranking ? `- **方案排名**: ${evalData.ranking.join(' > ')}` : ''),
+                                                phase_name: '评估'
+                                            });
+                                        } else if (event.stage === 'complete') {
+                                            messages.value.push({
+                                                type: 'summary',
+                                                sender: '综合方案',
+                                                content: event.data.final_solution
+                                            });
+                                            solverResult.value = event.data;
+                                        }
+
+                                        scrollToBottom();
+                                    } catch (e) {
+                                        // Skip invalid JSON
+                                    }
+                                }
+                            }
+                        }
+
+                    } catch (error) {
+                        console.error('Solve error:', error);
+                        messages.value.push({
+                            type: 'facilitator',
+                            sender: '系统',
+                            content: `❌ 求解失败: ${error.message}`,
+                            phase_name: '错误'
+                        });
+                    } finally {
+                        solverLoading.value = false;
+                    }
+                };
 
                 const fetchSessions = async () => {
                     try {
@@ -1701,7 +2020,12 @@
                     agents, expertPresets, phaseRounds, isPaused, hasSummary,
                     statistics, onlineUsers, userName, userMessage,
                     showReportModal, reportContent, availableModels,
-                    currentTab, pastSessions, fetchSessions, loadSessionHistory, // Added History vars
+                    currentTab, pastSessions, fetchSessions, loadSessionHistory,
+                    // Problem Solver
+                    solverProblem, solverExpertMode, solverSelectedExperts, solverMaxExperts,
+                    solverIterationRounds, solverLoading, solverStages, solverResult, showSolverExpertModal,
+                    startSolveProblem, removeSolverExpert, addSolverExpert,
+                    // Original functions
                     addPresetAgent, removeAgent, startFullSession,
                     increaseRounds, decreaseRounds, togglePause, resetSession,
                     renderMarkdown, exportSummaryMD, exportGraphMermaid, exportGraphImage, exportFullChat,
